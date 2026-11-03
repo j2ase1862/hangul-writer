@@ -421,17 +421,37 @@
       if (!synth || muted || !text) return;
       if (!voice) load();
       if (!queue && (synth.speaking || synth.pending)) synth.cancel();
-      // "|" part breaks → a comma pause ("우유의, 우!"), or just a space after ! ? .
-      const u = new SpeechSynthesisUtterance(text.replace(/([!?.])\s*\|\s*/g, '$1 ').replace(/\s*\|\s*/g, ', '));
-      u.lang = 'ko-KR';
-      const v = (voiceURI && koVoices().find((x) => idOf(x) === voiceURI)) || voice;
-      if (v) u.voice = v;
-      u.rate = rate || baseRate;
-      u.pitch = pitch;
-      u.volume = 1;
-      keep.push(u); if (keep.length > 6) keep.shift();
       try { synth.resume(); } catch (e) {}
-      synth.speak(u);
+      // Each "|" part is its own utterance (natural pause); "[en]" parts use an English voice.
+      splitParts(text).forEach((part) => {
+        const en = part.startsWith('[en]');
+        const u = new SpeechSynthesisUtterance(en ? part.slice(4) : part);
+        u.lang = en ? 'en-US' : 'ko-KR';
+        const v = en ? englishVoice() : (voiceURI && koVoices().find((x) => idOf(x) === voiceURI)) || voice;
+        if (v) u.voice = v;
+        u.rate = rate || baseRate;
+        u.pitch = pitch;
+        u.volume = 1;
+        keep.push(u); if (keep.length > 12) keep.shift();
+        synth.speak(u);
+      });
+    }
+    // Best English device voice (only used when an English voice file is missing)
+    let enVoice = null;
+    function englishVoice() {
+      if (enVoice || !synth) return enVoice;
+      const sc = (v) => {
+        const n = (v.name || '') + ' ' + (v.voiceURI || '');
+        let x = /^en[-_]US/i.test(v.lang) ? 20 : 0;
+        if (/siri/i.test(n)) x += 50;
+        if (/premium|enhanced|natural|neural/i.test(n)) x += 40;
+        if (/samantha|ava|allison|google us/i.test(n)) x += 15;
+        if (NOVELTY.test(n)) x -= 80;
+        return x;
+      };
+      const en = synth.getVoices().filter((v) => /^en([-_]|$)/i.test(v.lang || '')).sort((a, b) => sc(b) - sc(a));
+      enVoice = en[0] || null;
+      return enVoice;
     }
     // Human-friendly label: "Yuna (프리미엄)" etc.
     const quality = (v) => {
@@ -872,6 +892,115 @@
   const NUMBERS = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100];
 
   // ---------------------------------------------------------------------------
+  // English — manuscript print ("ball and stick") on a 4-line notebook.
+  // Letter coordinates in "em": y 0 = top line, 0.5 = middle (dashed) line, 1 = baseline,
+  // 1.5 = bottom line; x runs from 0 to the letter's width. Stroke order/direction as taught.
+  // ---------------------------------------------------------------------------
+  const seg = (...pts) => pts;                                                    // straight polyline
+  const chain = (...parts) => [].concat(parts[0], ...parts.slice(1).map((p) => p.slice(1))); // one continuous stroke
+  const UPPER = {
+    A: [seg([0.4, 0], [0, 1]), seg([0.4, 0], [0.8, 1]), seg([0.16, 0.62], [0.64, 0.62])],
+    B: [seg([0, 0], [0, 1]), chain(seg([0, 0], [0.38, 0]), arc(0.38, 0.25, 0.25, 0.25, -90, 90), seg([0.38, 0.5], [0, 0.5])),
+      chain(seg([0, 0.5], [0.42, 0.5]), arc(0.42, 0.75, 0.27, 0.25, -90, 90), seg([0.42, 1], [0, 1]))],
+    C: [arc(0.48, 0.5, 0.48, 0.5, -40, -320)],
+    D: [seg([0, 0], [0, 1]), chain(seg([0, 0], [0.32, 0]), arc(0.32, 0.5, 0.48, 0.5, -90, 90), seg([0.32, 1], [0, 1]))],
+    E: [seg([0, 0], [0, 1]), seg([0, 0], [0.66, 0]), seg([0, 0.5], [0.56, 0.5]), seg([0, 1], [0.66, 1])],
+    F: [seg([0, 0], [0, 1]), seg([0, 0], [0.66, 0]), seg([0, 0.5], [0.56, 0.5])],
+    G: [arc(0.48, 0.5, 0.48, 0.5, -40, -350), seg([0.52, 0.56], [0.94, 0.56], [0.94, 0.8])],
+    H: [seg([0, 0], [0, 1]), seg([0.76, 0], [0.76, 1]), seg([0, 0.5], [0.76, 0.5])],
+    I: [seg([0.3, 0], [0.3, 1]), seg([0, 0], [0.6, 0]), seg([0, 1], [0.6, 1])],
+    J: [chain(seg([0.6, 0], [0.6, 0.72]), arc(0.33, 0.72, 0.27, 0.28, 0, 160))],
+    K: [seg([0, 0], [0, 1]), seg([0.7, 0], [0, 0.56]), seg([0.24, 0.38], [0.74, 1])],
+    L: [seg([0, 0], [0, 1]), seg([0, 1], [0.62, 1])],
+    M: [seg([0, 0], [0, 1]), seg([0, 0], [0.46, 0.72], [0.92, 0]), seg([0.92, 0], [0.92, 1])],
+    N: [seg([0, 0], [0, 1]), seg([0, 0], [0.76, 1]), seg([0.76, 1], [0.76, 0])],
+    O: [ellipse(0.48, 0.5, 0.48, 0.5)],
+    P: [seg([0, 0], [0, 1]), chain(seg([0, 0], [0.38, 0]), arc(0.38, 0.27, 0.3, 0.27, -90, 90), seg([0.38, 0.54], [0, 0.54]))],
+    Q: [ellipse(0.48, 0.5, 0.48, 0.5), seg([0.56, 0.7], [0.98, 1.06])],
+    R: [seg([0, 0], [0, 1]), chain(seg([0, 0], [0.38, 0]), arc(0.38, 0.27, 0.3, 0.27, -90, 90), seg([0.38, 0.54], [0, 0.54])), seg([0.3, 0.54], [0.74, 1])],
+    S: [chain(arc(0.4, 0.26, 0.36, 0.26, -25, -270), arc(0.4, 0.75, 0.4, 0.25, -90, 150))],
+    T: [seg([0.4, 0], [0.4, 1]), seg([0, 0], [0.8, 0])],
+    U: [chain(seg([0, 0], [0, 0.68]), arc(0.38, 0.68, 0.38, 0.32, 180, 0), seg([0.76, 0.68], [0.76, 0]))],
+    V: [seg([0, 0], [0.42, 1], [0.84, 0])],
+    W: [seg([0, 0], [0.26, 1], [0.52, 0.3], [0.78, 1], [1.04, 0])],
+    X: [seg([0, 0], [0.78, 1]), seg([0.78, 0], [0, 1])],
+    Y: [seg([0, 0], [0.42, 0.5]), seg([0.84, 0], [0.42, 0.5], [0.42, 1])],
+    Z: [seg([0, 0], [0.76, 0], [0, 1], [0.78, 1])],
+  };
+  const bowl = (cx) => arc(cx, 0.75, 0.25, 0.25, -30, -390); // a d g q: from 1 o'clock, round to the left
+  const LOWER = {
+    a: [bowl(0.25), seg([0.5, 0.5], [0.5, 1])],
+    b: [chain(seg([0, 0], [0, 1], [0, 0.75]), arc(0.25, 0.75, 0.25, 0.25, 180, 540))],
+    c: [arc(0.26, 0.75, 0.26, 0.25, -40, -320)],
+    d: [bowl(0.25), seg([0.5, 0], [0.5, 1])],
+    e: [chain(seg([0.02, 0.75], [0.5, 0.75]), arc(0.26, 0.75, 0.24, 0.25, 0, -320))],
+    f: [chain(arc(0.3, 0.16, 0.16, 0.14, -20, -180), seg([0.14, 0.16], [0.14, 1])), seg([0, 0.5], [0.34, 0.5])],
+    g: [bowl(0.25), chain(seg([0.5, 0.5], [0.5, 1.28]), arc(0.27, 1.28, 0.23, 0.2, 0, 160))],
+    h: [chain(seg([0, 0], [0, 1], [0, 0.72]), arc(0.22, 0.72, 0.22, 0.2, 180, 360), seg([0.44, 0.72], [0.44, 1]))],
+    i: [seg([0.06, 0.5], [0.06, 1]), seg([0.06, 0.27], [0.06, 0.29])],
+    j: [chain(seg([0.32, 0.5], [0.32, 1.28]), arc(0.12, 1.28, 0.2, 0.18, 0, 160)), seg([0.32, 0.27], [0.32, 0.29])],
+    k: [seg([0, 0], [0, 1]), seg([0.42, 0.5], [0, 0.78]), seg([0.12, 0.7], [0.46, 1])],
+    l: [seg([0.06, 0], [0.06, 1])],
+    m: [chain(seg([0, 0.5], [0, 1], [0, 0.7]), arc(0.18, 0.7, 0.18, 0.2, 180, 360), seg([0.36, 0.7], [0.36, 1], [0.36, 0.7]),
+      arc(0.54, 0.7, 0.18, 0.2, 180, 360), seg([0.72, 0.7], [0.72, 1]))],
+    n: [chain(seg([0, 0.5], [0, 1], [0, 0.72]), arc(0.22, 0.72, 0.22, 0.2, 180, 360), seg([0.44, 0.72], [0.44, 1]))],
+    o: [ellipse(0.25, 0.75, 0.25, 0.25)],
+    p: [chain(seg([0, 0.5], [0, 1.5], [0, 0.75]), arc(0.25, 0.75, 0.25, 0.25, 180, 540))],
+    q: [bowl(0.25), seg([0.5, 0.5], [0.5, 1.5])],
+    r: [chain(seg([0, 0.5], [0, 1], [0, 0.72]), arc(0.22, 0.72, 0.22, 0.2, 180, 310))],
+    s: [chain(arc(0.22, 0.62, 0.2, 0.125, -30, -270), arc(0.22, 0.875, 0.22, 0.125, -90, 150))],
+    t: [seg([0.16, 0.12], [0.16, 1]), seg([0, 0.5], [0.34, 0.5])],
+    u: [chain(seg([0, 0.5], [0, 0.78]), arc(0.22, 0.78, 0.22, 0.22, 180, 0), seg([0.44, 0.78], [0.44, 0.5], [0.44, 1]))],
+    v: [seg([0, 0.5], [0.25, 1], [0.5, 0.5])],
+    w: [seg([0, 0.5], [0.18, 1], [0.36, 0.6], [0.54, 1], [0.72, 0.5])],
+    x: [seg([0, 0.5], [0.46, 1]), seg([0.46, 0.5], [0, 1])],
+    y: [seg([0, 0.5], [0.26, 1]), seg([0.52, 0.5], [0.1, 1.5])],
+    z: [seg([0, 0.5], [0.46, 0.5], [0, 1], [0.48, 1])],
+  };
+  // Place letters side by side on the 4 lines, as big as fits (single letters: lines at 12/37/62/87%)
+  function layoutEnglish(letters) {
+    const GAP = 0.14;
+    const ws = letters.map((L) => Math.max(...[].concat(...L).map((p) => p[0])));
+    const total = ws.reduce((a, w) => a + w, 0) + GAP * (letters.length - 1);
+    const sc = Math.min(0.5, 0.86 / total);
+    const top = 0.5 - 0.75 * sc;
+    let x = 0.5 - (total * sc) / 2;
+    const strokes = [];
+    letters.forEach((L, i) => {
+      L.forEach((st) => strokes.push(st.map(([px, py]) => [x + px * sc, top + py * sc])));
+      x += (ws[i] + GAP) * sc;
+    });
+    return { strokes, lines: [top, top + 0.5 * sc, top + sc, top + 1.5 * sc] };
+  }
+  // Spoken letter names (spelled so any voice reads them as the letter, not as a word)
+  const LETTER_SAY = { A: 'Ay', B: 'Bee', C: 'See', D: 'Dee', E: 'Ee', F: 'Ef', G: 'Jee', H: 'Aitch', I: 'Eye', J: 'Jay', K: 'Kay', L: 'El', M: 'Em',
+    N: 'En', O: 'Oh', P: 'Pee', Q: 'Cue', R: 'Ar', S: 'Ess', T: 'Tee', U: 'You', V: 'Vee', W: 'Double-you', X: 'Ex', Y: 'Why', Z: 'Zee' };
+  const LETTER_WORD = { A: ['apple', '🍎'], B: ['ball', '⚽'], C: ['cat', '🐱'], D: ['dog', '🐶'], E: ['egg', '🥚'], F: ['fish', '🐟'],
+    G: ['grapes', '🍇'], H: ['hat', '🎩'], I: ['ice cream', '🍦'], J: ['juice', '🧃'], K: ['kite', '🪁'], L: ['lion', '🦁'], M: ['moon', '🌙'],
+    N: ['nose', '👃'], O: ['octopus', '🐙'], P: ['pig', '🐷'], Q: ['queen', '👸'], R: ['rabbit', '🐰'], S: ['sun', '☀️'], T: ['tiger', '🐯'],
+    U: ['umbrella', '☂️'], V: ['violin', '🎻'], W: ['whale', '🐳'], X: ['box', '📦'], Y: ['yo-yo', '🪀'], Z: ['zebra', '🦓'] };
+  // "[en]" marks an English part: spoken by the English voice (Korean parts by the Korean voice)
+  function letterItem(ch) {
+    const up = ch === ch.toUpperCase(), L = ch.toUpperCase(), kind = up ? '대문자' : '소문자';
+    const { strokes, lines } = layoutEnglish([(up ? UPPER : LOWER)[ch]]);
+    const [w, e] = LETTER_WORD[L];
+    return { key: (up ? 'eu:' : 'el:') + ch, kind: 'english', glyph: ch, name: `${kind} ${ch}`, emoji: e, word: w, strokes, lines,
+      allowJoined: true, speak: `${kind} | [en]${LETTER_SAY[L]}! | [en]${w}!` };
+  }
+  // Easy words first (3 letters), then 4–5 letters
+  const EN_WORDS = [
+    ['cat', '🐱'], ['dog', '🐶'], ['pig', '🐷'], ['cow', '🐮'], ['fox', '🦊'], ['bee', '🐝'], ['ant', '🐜'], ['owl', '🦉'], ['hen', '🐔'],
+    ['bus', '🚌'], ['car', '🚗'], ['cup', '🥤'], ['hat', '🎩'], ['bed', '🛏️'], ['egg', '🥚'], ['sun', '☀️'], ['box', '📦'], ['pen', '🖊️'],
+    ['fish', '🐟'], ['duck', '🦆'], ['frog', '🐸'], ['lion', '🦁'], ['bear', '🐻'], ['cake', '🎂'], ['milk', '🥛'], ['star', '⭐'],
+    ['moon', '🌙'], ['tree', '🌳'], ['ball', '⚽'], ['book', '📕'], ['apple', '🍎'], ['zebra', '🦓'],
+  ];
+  function englishWordItem([w, e]) {
+    const { strokes, lines } = layoutEnglish([...w].map((c) => LOWER[c]));
+    return { key: 'ew:' + w, kind: 'eword', glyph: w, name: w, word: w, emoji: e, strokes, lines, allowJoined: true,
+      speak: `[en]${w}! | 같이 써 볼까?` };
+  }
+
+  // ---------------------------------------------------------------------------
   // Curriculum
   // ---------------------------------------------------------------------------
   const WAVE = Array.from({ length: 61 }, (_, i) => { const t = i / 60; return [0.12 + 0.76 * t, 0.5 - 0.13 * Math.sin(t * Math.PI * 3)]; });
@@ -941,6 +1070,9 @@
     vowels: VOWELS.map(jamoItem),
     words: [].concat(...WORD_THEMES.map((t) => t.items)),
     numbers: NUMBERS.map(numberItem),
+    upper: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('').map(letterItem),
+    lower: 'abcdefghijklmnopqrstuvwxyz'.split('').map(letterItem),
+    ewords: EN_WORDS.map(englishWordItem),
   };
   // 무한 반복 "글자": each letter once. Prefer a longer word as its example ("소방차의 소" over "소의 소").
   const SYLLABLES = (() => {
@@ -957,6 +1089,9 @@
     { id: 'vowels', label: '모음', items: ITEMS.vowels },
     { id: 'syllables', label: '글자', items: SYLLABLES },
     { id: 'numbers', label: '숫자', items: ITEMS.numbers },
+    { id: 'upper', label: 'ABC', items: ITEMS.upper },
+    { id: 'lower', label: 'abc', items: ITEMS.lower },
+    { id: 'ewords', label: '단어', items: ITEMS.ewords },
   ];
 
   const TABS = [
@@ -965,6 +1100,9 @@
     { id: 'vowels', label: '모음', glyph: 'ㅏ', color: '#34D399', shadow: '#059669' },
     { id: 'words', label: '낱말', glyph: '가', color: '#F472B6', shadow: '#DB2777' },
     { id: 'numbers', label: '숫자', glyph: '1', color: '#FBBF24', shadow: '#D97706' },
+    { id: 'upper', label: '대문자', glyph: 'A', color: '#34D399', shadow: '#059669' },
+    { id: 'lower', label: '소문자', glyph: 'a', color: '#2DD4BF', shadow: '#0D9488' },
+    { id: 'ewords', label: '단어', icon: 'Type', color: '#60A5FA', shadow: '#2563EB' },
     { id: 'practice', label: '무한 반복', icon: 'Infinity', color: '#A78BFA', shadow: '#7C3AED' },
   ];
 
@@ -979,11 +1117,13 @@
   // What the child picks on the start screen. tabs = the tabs inside; pcats = 무한 반복 categories.
   const SUBJECTS = [
     { id: 'hangul', label: '한글', glyph: '가', sub: '자음 · 모음 · 낱말', color: '#FB923C', shadow: '#EA580C',
-      tabs: ['consonants', 'vowels', 'words', 'practice'], pcats: ['consonants', 'vowels', 'syllables'], intro: '한글 써 볼까?' },
+      tabs: ['consonants', 'vowels', 'words', 'practice'], pcats: ['consonants', 'vowels', 'syllables'], intro: '한글 써 볼까?', starCats: ['consonants', 'vowels', 'words'] },
     { id: 'numbers', label: '숫자', glyph: '1', sub: '0 ~ 100', color: '#FBBF24', shadow: '#D97706',
-      tabs: ['numbers', 'practice'], pcats: ['numbers'], intro: '숫자 써 볼까?' },
+      tabs: ['numbers', 'practice'], pcats: ['numbers'], intro: '숫자 써 볼까?', starCats: ['numbers'] },
+    { id: 'english', label: '영어', glyph: 'A', sub: 'ABC · abc · 단어', color: '#34D399', shadow: '#059669',
+      tabs: ['upper', 'lower', 'ewords', 'practice'], pcats: ['upper', 'lower', 'ewords'], intro: '영어 써 볼까?', starCats: ['english'] },
     { id: 'lines', label: '선 긋기', glyph: '〰️', sub: '손 풀기', color: '#38BDF8', shadow: '#0EA5E9',
-      tabs: ['lines', 'practice'], pcats: ['lines'], intro: '선 긋기 해 볼까?' },
+      tabs: ['lines', 'practice'], pcats: ['lines'], intro: '선 긋기 해 볼까?', starCats: ['lines'] },
   ];
 
   const SAY = {
@@ -1002,7 +1142,8 @@
   const MILESTONE_MAX = 100; // voice files exist for 5, 10, … 100 repetitions
   function buildPhrases() {
     const out = new Set([SAY.retry, SAY.inkFirst, SAY.almost, SAY.stray, SAY.missing, SAY.joined, ...PRAISE, ...NUM_KO, ...SUBJECTS.map((x) => x.intro)]);
-    [...ITEMS.lines, ...ITEMS.consonants, ...ITEMS.vowels, ...ITEMS.numbers].forEach((it) => out.add(it.speak));
+    [...ITEMS.lines, ...ITEMS.consonants, ...ITEMS.vowels, ...ITEMS.numbers, ...ITEMS.upper, ...ITEMS.lower, ...ITEMS.ewords]
+      .forEach((it) => out.add(it.speak));
     ITEMS.words.forEach((w) => {
       out.add(SAY.wordIntro(w, w.syllables[0]));
       out.add(SAY.wordDone(w));
@@ -1033,13 +1174,16 @@
   //   • the whole letter must be covered well enough                    → otherwise 'shape'
   // Returns { pass, reason, coveredIdx } — coveredIdx = guide strokes already done (badges turn ✓).
   // ---------------------------------------------------------------------------
-  function evaluate(guide, user, { free = false, lenient = false } = {}) {
+  function evaluate(guide, user, { free = false, lenient = false, allowJoined = false } = {}) {
     const T = lenient ? { prec: 0.55, own: 0.6, total: 0.65 } : { prec: 0.7, own: 0.75, total: 0.8 };
     const res = (pass, reason, coveredIdx = []) => ({ pass, reason, coveredIdx });
     if (!guide.length) return res(false, 'missing');
-    // child's strokes, evenly sampled; drop taps/dots shorter than 2% of the paper
-    let us = user.map((s) => resample(s.pts, 0.008)).filter((p) => p.length > 2 && pathLen(p) >= 0.02);
+    // child's strokes, evenly sampled; taps/dots shorter than 2% of the paper only count for guide dots (i, j)
+    const sampled = user.map((s) => resample(s.pts, 0.008));
+    let us = sampled.filter((p) => p.length > 2 && pathLen(p) >= 0.02);
+    let taps = sampled.filter((p) => !(p.length > 2 && pathLen(p) >= 0.02));
     if (!us.length) return res(false, 'missing');
+    const isDot = guide.map((g) => pathLen(g) < 0.035);
     const gs = guide.map((s) => resample(s, 0.012));
     const allG = [].concat(...gs);
 
@@ -1049,7 +1193,9 @@
       const uMax = Math.max(ub.w, ub.h), gMax = Math.max(gb.w, gb.h);
       if (uMax < 0.12) return res(false, 'shape');
       const k = gMax / uMax;
-      us = us.map((p) => p.map(([x, y]) => [gb.cx + (x - ub.cx) * k, gb.cy + (y - ub.cy) * k]));
+      const fit = (p) => p.map(([x, y]) => [gb.cx + (x - ub.cx) * k, gb.cy + (y - ub.cy) * k]);
+      us = us.map(fit);
+      taps = taps.map(fit);
     }
     const tc = free ? 0.1 : 0.085;  // a guide point counts as traced if ink is this close
     const tp = free ? 0.13 : 0.12;  // a drawn point counts as "on the guide" if a guide is this close
@@ -1087,7 +1233,10 @@
     // coverage of each guide stroke by ITS OWN drawn strokes only
     const per = gs.map((g, i) => {
       const mine = [].concat(...us.filter((_, j) => owner[j] === i));
-      return mine.length ? frac(g, (p) => near(p, mine, tc)) : 0;
+      if (mine.length) return frac(g, (p) => near(p, mine, tc));
+      // a guide dot is also fine with a quick tap right on it
+      if (isDot[i] && taps.some((t) => t.some((p) => near(p, g, tc * 0.8)))) return 1;
+      return 0;
     });
     const coveredIdx = per.map((v, i) => (v >= 0.75 ? i : -1)).filter((i) => i >= 0);
 
@@ -1096,7 +1245,26 @@
       // every guide stroke is inked, but some share one drawn line → strokes were joined together
       const allInk = [].concat(...us);
       const joined = gs.every((g) => frac(g, (p) => near(p, allInk, tc)) >= T.own);
-      return res(false, joined ? 'joined' : 'missing', coveredIdx);
+      const dotMissing = per.some((v, i) => isDot[i] && v < T.own); // dots always need their own mark
+      // English letters are often written in one go (a, d, n…) — fine there (not in 한글), but only if the
+      // ink runs right ALONG every stroke, not just past the ends of other strokes (E without its stem)
+      const tracedTight = gs.every((g) => frac(g, (p) => near(p, allInk, tc * 0.5)) >= (lenient ? 0.7 : 0.75));
+      // …and the drawn line that "absorbs" a stroke must be long enough to have drawn it too: a bare "o"
+      // is not a joined "a" (the stick of "a" runs along the circle, so position alone can't tell them apart).
+      // groupLen[k] = ink of the drawn pieces owned by guide stroke k; need[k] = guide length it must account for.
+      const groupLen = gs.map((_, k) => us.reduce((a, u, j) => a + (owner[j] === k ? pathLen(u) : 0), 0));
+      const need = gs.map((_, k) => (per[k] >= T.own ? pathLen(guide[k]) : 0));
+      let enoughInk = true;
+      gs.forEach((g, i) => {
+        if (per[i] >= T.own || isDot[i]) return;
+        let bj = -1, bv = 0;
+        us.forEach((u, j) => { const v = frac(g, (p) => near(p, u, tc * 0.5)); if (v > bv) { bv = v; bj = j; } });
+        if (bj < 0 || owner[bj] < 0) { enoughInk = false; return; }
+        need[owner[bj]] += pathLen(guide[i]);
+      });
+      if (!gs.every((_, k) => need[k] === 0 || groupLen[k] >= 0.85 * need[k])) enoughInk = false;
+      const ok = joined && allowJoined && !dotMissing && tracedTight && enoughInk;
+      if (!ok) return res(false, joined && !dotMissing && tracedTight && enoughInk ? 'joined' : 'missing', coveredIdx);
     }
     const allInk = [].concat(...us);
     if (frac(allG, (p) => near(p, allInk, tc)) < T.total) return res(false, 'shape', coveredIdx);
@@ -1124,7 +1292,21 @@
 
   function drawGuide(c, S, item, { showGrid, showGuide, covered }) {
     c.clearRect(0, 0, S, S);
-    if (showGrid) {
+    if (showGrid && item && item.lines) {
+      // 영어 4선 노트: top · middle (dashed) · baseline (red) · bottom
+      const [yt, ym, yb, yd] = item.lines.map((v) => v * S);
+      const rule = (y, color, dash) => {
+        c.strokeStyle = color; c.setLineDash(dash || []);
+        c.beginPath(); c.moveTo(S * 0.03, y); c.lineTo(S * 0.97, y); c.stroke();
+      };
+      c.save();
+      c.lineWidth = Math.max(1.5, S * 0.004);
+      rule(yt, 'rgba(96,165,250,0.6)');
+      rule(ym, 'rgba(96,165,250,0.55)', [S * 0.014, S * 0.014]);
+      rule(yb, 'rgba(248,113,113,0.8)');
+      rule(yd, 'rgba(96,165,250,0.6)');
+      c.restore();
+    } else if (showGrid) {
       c.save();
       c.strokeStyle = 'rgba(248,113,113,0.45)';
       c.lineWidth = Math.max(1.5, S * 0.0035);
@@ -1167,6 +1349,7 @@
     // 3) direction arrows
     list.forEach((s, i) => {
       const L = pathLen(s);
+      if (L < 0.04) return; // a dot (i, j): no arrow
       const fr = L < 0.9 ? [0.55] : [0.3, 0.72];
       fr.forEach((f) => {
         const { p, dir } = walk(s, L * f);
@@ -1295,7 +1478,7 @@
     function afterStroke() {
       const p = P.current;
       const free = !p.showGuide;
-      const res = evaluate(p.item.strokes, strokes.current, { free });
+      const res = evaluate(p.item.strokes, strokes.current, { free, allowJoined: !!p.item.allowJoined });
       if (!free) {
         const fresh = res.coveredIdx.filter((i) => !covered.current.has(i));
         if (fresh.length) {
@@ -1440,7 +1623,7 @@
 
     useImperativeHandle(ref, () => ({
       hasInk: () => strokes.current.length > 0,
-      check: () => evaluate(P.current.item.strokes, strokes.current, { free: !P.current.showGuide, lenient: true }),
+      check: () => evaluate(P.current.item.strokes, strokes.current, { free: !P.current.showGuide, lenient: true, allowJoined: !!P.current.item.allowJoined }),
       clear(animated) {
         stopDemo();
         const s = SR.current;
@@ -1554,10 +1737,11 @@
   const Chip = forwardRef(function Chip({ item, active, count, onClick }, ref) {
     const base = 'relative flex-none rounded-3xl border-4 flex flex-col items-center justify-center transition-transform duration-150 ';
     const look = active ? 'bg-orange-50 border-orange-400 scale-105' : 'bg-white border-orange-100';
-    const w = item.kind === 'word' ? 'min-w-[6.75rem] px-3' : 'chip-sq';
+    const isWord = item.kind === 'word' || item.kind === 'eword';
+    const w = isWord ? 'min-w-[6.75rem] px-3' : 'chip-sq';
     let body;
     if (item.kind === 'line') body = html`<${Frag}><${MiniSvg} strokes=${item.strokes} size=${48} color=${active ? '#F97316' : '#64748B'} /><span className="text-[0.875rem] leading-none mt-0.5 text-slate-500">${item.name}</span><//>`;
-    else if (item.kind === 'word') body = html`<${Frag}><span className="text-[2.125rem] leading-none">${item.emoji}</span><span className="text-[1.375rem] leading-none mt-1">${item.word}</span><//>`;
+    else if (isWord) body = html`<${Frag}><span className="text-[2.125rem] leading-none">${item.emoji}</span><span className="text-[1.375rem] leading-none mt-1">${item.word}</span><//>`;
     else body = html`<span className="leading-none" style=${{ fontSize: (item.glyph.length >= 3 ? 2 : item.glyph.length === 2 ? 2.5 : 3) + 'rem', color: active ? '#EA580C' : '#4A3F5C' }}>${item.glyph}</span>`;
     return html`
       <button ref=${ref} onClick=${onClick} className=${base + look + ' ' + w + ' chip'} aria-label=${item.name || item.word}>
@@ -1615,8 +1799,9 @@
     drop(id) { try { localStorage.removeItem('monggeul.progress.' + id); } catch (e) {} },
   };
   // Which tab a star belongs to (progress keys: l:선, j:자모, s:/w:낱말, n:숫자)
-  const STAR_CATS = [['lines', '선 긋기'], ['consonants', '자음'], ['vowels', '모음'], ['words', '낱말'], ['numbers', '숫자']];
+  const STAR_CATS = [['lines', '선 긋기'], ['consonants', '자음'], ['vowels', '모음'], ['words', '낱말'], ['numbers', '숫자'], ['english', '영어']];
   function catOf(key) {
+    if (/^e[ulw]:/.test(key)) return 'english';
     const t = key.slice(0, 2), v = key.slice(2);
     if (t === 'l:') return 'lines';
     if (t === 'j:') return CONSONANTS.includes(v) ? 'consonants' : 'vowels';
@@ -1677,10 +1862,7 @@
     const many = profiles.length > 1;
     const [who, setWho] = useState(many && firstTime ? null : activeId);
     const me = profiles.find((p) => p.id === who);
-    const starsFor = (sub) => sub.pcats.concat(sub.tabs)
-      .map((c) => (c === 'syllables' ? 'words' : c))
-      .filter((c, i, a) => a.indexOf(c) === i && STAR_CATS.some(([k]) => k === c))
-      .reduce((a, c) => a + starsOf(who === activeId ? progress : Profiles.progress(who), c), 0);
+    const starsFor = (sub) => sub.starCats.reduce((a, c) => a + starsOf(who === activeId ? progress : Profiles.progress(who), c), 0);
     return html`
       <div className="scroll-y fixed inset-0 z-50 flex flex-col items-center text-center px-4 py-6"
            style=${{ background: 'radial-gradient(circle at 30% 20%, #FFE4E6 0, transparent 40%), radial-gradient(circle at 75% 75%, #E0E7FF 0, transparent 45%), #FFF8EE',
@@ -1698,7 +1880,7 @@
                       <span className="text-[1.75rem]">${me.icon}</span>${me.name} <span className="text-slate-400 text-[1rem]">바꾸기</span></button>`}
                   <p className="text-[1.75rem] text-slate-600">무엇을 써 볼까요?</p>
                 </div>
-                <div className="grid gap-4 w-full mt-5" style=${{ gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 8.5rem), 1fr))' }}>
+                <div className="grid gap-4 w-full mt-5" style=${{ gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 10rem), 1fr))' }}>
                   ${SUBJECTS.map((sub) => html`<button key=${sub.id} onClick=${() => onStart(sub.id, who)}
                       className="chooser-card btn3d rounded-[2rem] text-white flex flex-col items-center justify-center gap-1 py-5 px-2 min-h-[11rem]"
                       style=${{ background: sub.color, boxShadow: `0 8px 0 ${sub.shadow}` }}>
@@ -1735,7 +1917,7 @@
     const [subjectId, setSubjectId] = useState(null); // null → start screen (pick 한글/숫자/선 긋기)
     const SUB = SUBJECTS.find((x) => x.id === subjectId) || SUBJECTS[0];
     const [tab, setTab] = useState('consonants');
-    const [idx, setIdx] = useState({ lines: 0, consonants: 0, vowels: 0, words: 0, numbers: 0 });
+    const [idx, setIdx] = useState({ lines: 0, consonants: 0, vowels: 0, words: 0, numbers: 0, upper: 0, lower: 0, ewords: 0 });
     const [syl, setSyl] = useState(0);
     const [pCat, setPCat] = useState(0);
     const [wTheme, setWTheme] = useState(0);

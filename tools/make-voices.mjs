@@ -13,6 +13,10 @@
 //   node tools/make-voices.mjs samples Chirp3     #   (only voices whose name contains "Chirp3")
 //   node tools/make-voices.mjs build ko-KR-Chirp3-HD-Leda          # make all app voice files
 //   node tools/make-voices.mjs build ko-KR-Chirp3-HD-Leda --rate 0.9
+//   node tools/make-voices.mjs voices en-US       # list English voices
+//
+// Sentences parts starting with "[en]" are English: they use the same voice name in en-US
+// (ko-KR-Chirp3-HD-Gacrux → en-US-Chirp3-HD-Gacrux), or pick one with --en-voice <name>.
 //
 // Re-running build only makes files for new/changed sentences (unless the voice or rate changed).
 
@@ -49,8 +53,10 @@ function loadPhrases() {
   return new Function(m[1] + '\nreturn { phrases: buildPhrases(), phraseId };')();
 }
 
-// What we send to Google: drop the quote marks used for emphasis ("사자의, '사'!").
-const forTts = (text) => text.replace(/['"]/g, '');
+// What we send to Google: drop the "[en]" language tag and the quote marks used for emphasis ("사자의, '사'!").
+const isEnglish = (text) => text.startsWith('[en]');
+const forTts = (text) => text.replace(/^\[en\]/, '').replace(/['"]/g, '');
+const langOf = (voice) => voice.slice(0, 5); // "en-US-Chirp3-HD-Gacrux" → "en-US"
 
 async function api(pathname, init = {}) {
   for (let attempt = 1; ; attempt++) {
@@ -81,7 +87,7 @@ async function synthesize(text, voice, rate) {
     method: 'POST',
     body: JSON.stringify({
       input: { text: forTts(text) },
-      voice: { languageCode: 'ko-KR', name: voice },
+      voice: { languageCode: langOf(voice), name: voice },
       audioConfig: { audioEncoding: 'MP3', ...(withRate && rate ? { speakingRate: rate } : {}) },
     }),
   });
@@ -101,9 +107,10 @@ async function synthesize(text, voice, rate) {
 // always bigger, so treat tiny files as failures and retry the syllable written differently.
 const MIN_BYTES = 1800;
 async function synthesizeChecked(text, voice, rate) {
-  const core = forTts(text).replace(/[!?.~,\s]/g, '');
-  const variants = [text];
-  if (core.length <= 2) variants.push(`${core}.`, core, `${core}~`, `${core}!!`, `${core}, `);
+  const core = forTts(text).replace(/[!?.~,]/g, '').trim();
+  const tag = isEnglish(text) ? '[en]' : '';
+  // short texts (one syllable, a letter name) sometimes come back silent → retry written differently
+  const variants = [text, ...(core.replace(/\s/g, '').length <= 6 ? [`${core}.`, core, `${core}~`, `${core}!!`, `${core}, `].map((v) => tag + v) : [])];
   for (const v of variants) {
     const mp3 = await synthesize(v, voice, rate);
     if (mp3.length >= MIN_BYTES) return mp3;
@@ -113,21 +120,21 @@ async function synthesizeChecked(text, voice, rate) {
   throw err;
 }
 
-async function listVoices() {
-  const { voices = [] } = await api('/voices?languageCode=ko-KR');
+async function listVoices(lang = 'ko-KR') {
+  const { voices = [] } = await api('/voices?languageCode=' + lang);
   return voices
-    .filter((v) => (v.languageCodes || []).some((c) => c.toLowerCase() === 'ko-kr'))
+    .filter((v) => (v.languageCodes || []).some((c) => c.toLowerCase() === lang.toLowerCase()))
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
 const family = (name) => (name.match(/ko-KR-([A-Za-z0-9]+(?:-HD)?)/) || [])[1] || '?';
 const genderKo = (g) => ({ FEMALE: '여성', MALE: '남성', NEUTRAL: '중성' }[g] || '');
 
-async function cmdVoices() {
+async function cmdVoices(lang) {
   needKey();
-  const voices = await listVoices();
-  if (!voices.length) fail('한국어 목소리를 찾지 못했어요.');
-  console.log(`\n한국어 목소리 ${voices.length}개 (Chirp3-HD > Neural2 > Wavenet > Standard 순으로 자연스러워요)\n`);
+  const voices = await listVoices(/^[a-z]{2}-[A-Z]{2}$/.test(lang || '') ? lang : 'ko-KR');
+  if (!voices.length) fail('목소리를 찾지 못했어요.');
+  console.log(`\n목소리 ${voices.length}개 (Chirp3-HD > Neural2 > Wavenet > Standard 순으로 자연스러워요)\n`);
   for (const v of voices) console.log(`  ${v.name.padEnd(34)} ${family(v.name).padEnd(10)} ${genderKo(v.ssmlGender)}`);
   console.log('\n다음: node tools/make-voices.mjs samples   (들어 보고 고르기)\n');
 }
@@ -152,14 +159,25 @@ async function cmdSamples(filter) {
   console.log('   node tools/make-voices.mjs build <목소리 이름>\n');
 }
 
-async function cmdBuild(voice, rate) {
+async function cmdBuild(voice, rate, enVoiceArg) {
   needKey();
   if (!voice) fail('목소리 이름을 적어 주세요. 예: node tools/make-voices.mjs build ko-KR-Chirp3-HD-Leda');
+  const enVoice = enVoiceArg || voice.replace(/^[a-z]{2}-[A-Z]{2}/, 'en-US');
   const { phrases, phraseId } = loadPhrases();
+  if (phrases.some(isEnglish)) {
+    const en = await listVoices('en-US');
+    if (!en.some((v) => v.name === enVoice)) {
+      fail(`영어 목소리 "${enVoice}"를 찾지 못했어요.\n   영어 목소리 목록: node tools/make-voices.mjs voices en-US\n   골라서: ... build ${voice} --en-voice <영어 목소리>`);
+    }
+  }
   fs.mkdirSync(AUDIO, { recursive: true });
   const manifestPath = path.join(AUDIO, 'manifest.json');
   const old = fs.existsSync(manifestPath) ? JSON.parse(fs.readFileSync(manifestPath, 'utf8')) : null;
-  const sameVoice = old && old.voice === voice && old.rate === rate;
+  // Korean and English files are kept as long as THEIR voice (and the rate) didn't change
+  const sameKo = old && old.voice === voice && old.rate === rate;
+  const sameEn = old && old.rate === rate && (old.voiceEn === enVoice || !old.voiceEn);
+  const sameVoice = (text) => (isEnglish(text) ? sameEn : sameKo);
+  const voiceFor = (text) => (isEnglish(text) ? enVoice : voice);
 
   const items = phrases.map((text) => ({ id: phraseId(text), text }));
   const ids = new Set(items.map((i) => i.id));
@@ -168,9 +186,9 @@ async function cmdBuild(voice, rate) {
   // File names are hashes of the sentence, so an existing file already holds this exact sentence.
   // Keep it as long as the voice/rate are unchanged (also resumes a run that stopped part-way).
   const fileOk = (id) => { const f = path.join(AUDIO, id + '.mp3'); return fs.existsSync(f) && fs.statSync(f).size >= MIN_BYTES; };
-  const todo = items.filter((i) => !(sameVoice && fileOk(i.id))); // tiny = silent → make again
+  const todo = items.filter((i) => !(sameVoice(i.text) && fileOk(i.id))); // tiny = silent → make again
   const chars = todo.reduce((a, i) => a + forTts(i.text).length, 0);
-  console.log(`\n목소리 ${voice}${rate ? ` · 빠르기 ${rate}` : ''}`);
+  console.log(`\n목소리 ${voice}${phrases.some(isEnglish) ? ` · 영어 ${enVoice}` : ''}${rate ? ` · 빠르기 ${rate}` : ''}`);
   console.log(`문장 ${items.length}개 중 새로 만들 것 ${todo.length}개 (약 ${chars}자)\n`);
 
   let done = 0, failed = 0;
@@ -179,7 +197,7 @@ async function cmdBuild(voice, rate) {
   const worker = async () => {
     for (let it = queue.shift(); it; it = queue.shift()) {
       try {
-        fs.writeFileSync(path.join(AUDIO, it.id + '.mp3'), await synthesizeChecked(it.text, voice, rate));
+        fs.writeFileSync(path.join(AUDIO, it.id + '.mp3'), await synthesizeChecked(it.text, voiceFor(it.text), rate));
         done++;
         process.stdout.write(`\r  ${done}/${todo.length} 만드는 중…`);
       } catch (e) {
@@ -211,6 +229,7 @@ async function cmdBuild(voice, rate) {
   const manifest = {
     provider: 'google-cloud-tts',
     voice,
+    voiceEn: enVoice,
     rate: rate || null,
     generated: new Date().toISOString(),
     clips: Object.fromEntries(items.filter((i) => fileOk(i.id)).map((i) => [i.id, i.text])),
@@ -234,9 +253,11 @@ const [cmd, arg, ...rest] = process.argv.slice(2);
 const rateIdx = rest.indexOf('--rate');
 const rate = rateIdx >= 0 ? Number(rest[rateIdx + 1]) : (cmd === 'build' && arg ? 0.9 : undefined);
 
-const run = { voices: cmdVoices, samples: () => cmdSamples(arg), build: () => cmdBuild(arg, rate), list: cmdList }[cmd];
+const enIdx = rest.indexOf('--en-voice');
+const enVoice = enIdx >= 0 ? rest[enIdx + 1] : undefined;
+const run = { voices: () => cmdVoices(arg), samples: () => cmdSamples(arg), build: () => cmdBuild(arg, rate, enVoice), list: cmdList }[cmd];
 if (!run) {
-  console.log('사용법: node tools/make-voices.mjs <voices | samples [이름일부] | build <목소리> [--rate 0.9] | list>');
+  console.log('사용법: node tools/make-voices.mjs <voices [en-US] | samples [이름일부] | build <목소리> [--rate 0.9] [--en-voice <영어 목소리>] | list>');
   process.exit(1);
 }
 Promise.resolve(run()).catch((e) => fail(e.message));
