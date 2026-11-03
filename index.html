@@ -50,7 +50,11 @@
     touch-action: manipulation;
   }
   #root { height: 100%; }
-  button { font-family: inherit; touch-action: manipulation; cursor: pointer; }
+  /* touch-action:none on buttons → a tap can never be re-interpreted as a pan (which cancels Pencil taps) */
+  button { font-family: inherit; touch-action: none; cursor: pointer; }
+  .scroll-x button { touch-action: pan-x; }
+  .scroll-y button { touch-action: pan-y; }
+  .scroll-y { overflow-y: auto; touch-action: pan-y; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
 
   /* Drawing surface: no scrolling, zooming, or system gestures */
   .pad, .pad canvas { touch-action: none; -ms-touch-action: none; }
@@ -77,29 +81,44 @@
   .btn3d:active { transform: translateY(4px); box-shadow: 0 2px 0 rgba(0,0,0,0.16); }
   .btn3d:disabled { filter: grayscale(.6) opacity(.55); }
 
-  /* Layout: landscape = board + side column; portrait = board over a side panel */
-  .workspace { flex: 1 1 0; min-height: 0; display: flex; gap: 16px; padding: 0 16px 16px; }
-  .board-area { flex: 1 1 0; min-width: 0; min-height: 0; position: relative; display: flex; align-items: center; justify-content: center; }
-  .side { flex: none; min-height: 0; }
-  .actions { display: grid; gap: 12px; }
-  .card-inner { display: flex; gap: 14px; align-items: center; }
-  .glyph-box { flex: none; display: grid; place-items: center; border-radius: 24px; background: #FFF4E6; }
+  /* Layout (tested for iPad Pro 11" 834×1194 and 12.9" 1024×1366)
+     landscape:  [ crayons | paper ]  [ info card ]
+                                      [ controls  ]
+     portrait:   [ info card ]
+                 [ crayons | paper ]
+                 [ controls ]                                                        */
+  .chip { height: 84px; }
+  .chip-sq { width: 84px; }
+  .tab-btn { height: 70px; }
+  .workspace { flex: 1 1 0; min-height: 0; display: grid; gap: 16px; padding: 6px 20px 18px; }
+  .board-area { grid-area: board; min-width: 0; min-height: 0; position: relative; display: flex; align-items: center; justify-content: center; }
+  .info { grid-area: info; min-width: 0; }
+  .controls { grid-area: controls; min-width: 0; }
+  .card { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; background: #fff; border-radius: 28px; padding: 14px 18px; }
+  .glyph-box { flex: none; width: 96px; height: 96px; display: grid; place-items: center; border-radius: 22px; background: #FFF4E6; }
+  .card-text { flex: 1 1 0; min-width: 0; display: flex; gap: 12px; }
+  .card-label { min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+  .actions { display: flex; gap: 14px; }
+  .act-row { display: flex; gap: 14px; flex: 1 1 0; min-width: 0; }
+  .rail { display: flex; flex-direction: column; gap: 10px; padding: 10px; background: #fff; border-radius: 40px; }
 
   @media (orientation: landscape) {
-    .workspace { flex-direction: row; }
-    .side { width: 372px; display: flex; flex-direction: column; gap: 14px; overflow-y: auto; overflow-x: hidden; padding: 4px 6px 10px; }
-    .actions { grid-template-columns: 1fr 1fr; }
-    .card-inner { flex-direction: column; text-align: center; }
-    .glyph-box { width: 150px; height: 150px; }
-    .practice .glyph-box { width: 118px; height: 118px; }
+    .workspace { grid-template-columns: minmax(0, 1fr) 340px; grid-template-rows: auto minmax(0, 1fr); grid-template-areas: "board info" "board controls"; }
+    .card-text { flex-direction: column; align-items: flex-start; }
+    .counter { flex-basis: 100%; }
+    .actions { flex-direction: column; }
   }
   @media (orientation: portrait) {
-    .workspace { flex-direction: column; }
-    .side { display: grid; grid-template-columns: minmax(280px, 38%) 1fr; grid-auto-rows: min-content; gap: 12px; }
-    .side > .card { grid-row: 1 / span 3; }
-    .actions { grid-template-columns: repeat(4, 1fr); }
-    .card-inner { flex-direction: row; }
-    .glyph-box { width: 124px; height: 124px; }
+    .workspace { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto; grid-template-areas: "info" "board" "controls"; }
+    .card-text { flex-direction: row; align-items: center; justify-content: space-between; }
+    .counter { flex: none; }
+  }
+  /* Short landscape screens (iPad 11"): compact the top bars so the paper stays big */
+  @media (orientation: landscape) and (max-height: 900px) {
+    .chip { height: 74px; }
+    .chip-sq { width: 74px; }
+    .tab-btn { height: 60px; }
+    .workspace { padding-top: 2px; }
   }
 
   /* Animations */
@@ -160,8 +179,54 @@
   // iPad gesture lockdown: no rubber-band scrolling, pinch zoom, or double-tap zoom
   // ---------------------------------------------------------------------------
   document.addEventListener('touchmove', (e) => {
-    if (!(e.target.closest && e.target.closest('.scroll-x'))) e.preventDefault();
+    if (!(e.target.closest && e.target.closest('.scroll-x, .scroll-y'))) e.preventDefault();
   }, { passive: false });
+
+  // Apple Pencil taps on buttons: iPadOS often never synthesizes a `click` for a Pencil tap (the Pencil
+  // reports tiny movements, and the touchmove lock above cancels the tap gesture). So we detect the
+  // Pencil tap ourselves and click the button, swallowing the native click if it does arrive.
+  let penTap = null;
+  let swallowClickUntil = 0;
+  let ownClick = false;
+  const penTapTarget = (e) => {
+    const b = e.target && e.target.closest ? e.target.closest('button') : null;
+    return b && !b.disabled ? b : null;
+  };
+  let swallowTarget = null;
+  const firePenTap = (b) => {
+    swallowClickUntil = performance.now() + 500;
+    swallowTarget = b;
+    ownClick = true;
+    try { b.click(); } finally { ownClick = false; }
+  };
+  document.addEventListener('pointerdown', (e) => {
+    if (e.pointerType !== 'pen') return;
+    const b = penTapTarget(e);
+    penTap = b ? { b, x: e.clientX, y: e.clientY, lx: e.clientX, ly: e.clientY, t: performance.now() } : null;
+  }, true);
+  document.addEventListener('pointermove', (e) => {
+    if (e.pointerType === 'pen' && penTap) { penTap.lx = e.clientX; penTap.ly = e.clientY; }
+  }, true);
+  document.addEventListener('pointerup', (e) => {
+    if (e.pointerType !== 'pen' || !penTap) return;
+    const { b, x, y } = penTap;
+    penTap = null;
+    const hit = document.elementFromPoint(e.clientX, e.clientY);
+    if (Math.hypot(e.clientX - x, e.clientY - y) <= 30 && hit && b.contains(hit) && !b.disabled) firePenTap(b);
+  }, true);
+  // If the system turns a tiny Pencil wiggle into a "pan" it sends pointercancel instead of pointerup.
+  document.addEventListener('pointercancel', (e) => {
+    if (e.pointerType !== 'pen' || !penTap) return;
+    const { b, x, y, lx, ly, t } = penTap;
+    penTap = null;
+    if (Math.hypot(lx - x, ly - y) <= 12 && performance.now() - t < 600 && !b.disabled) firePenTap(b);
+  }, true);
+  // Swallow the system's own (late) click for the same Pencil tap so the button doesn't fire twice.
+  document.addEventListener('click', (e) => {
+    if (!ownClick && performance.now() < swallowClickUntil && swallowTarget && swallowTarget.contains(e.target)) {
+      e.preventDefault(); e.stopPropagation();
+    }
+  }, true);
   ['gesturestart', 'gesturechange', 'gestureend'].forEach((t) =>
     document.addEventListener(t, (e) => e.preventDefault(), { passive: false }));
   document.addEventListener('contextmenu', (e) => e.preventDefault());
@@ -217,36 +282,58 @@
       if (NOVELTY.test(n)) s -= 80;
       return s;
     }
+    let preferredURI = null;   // chosen in 설정; null = pick the best automatically
+    let baseRate = 0.85;
+    let onVoicesCb = null;
+    const koVoices = () => (synth ? synth.getVoices().filter((v) => /^ko([-_]|$)/i.test(v.lang || '')) : [])
+      .sort((a, b) => score(b) - score(a));
+    const idOf = (v) => v.voiceURI || v.name;
     function load() {
-      if (!synth) return;
-      const ko = synth.getVoices().filter((v) => /^ko([-_]|$)/i.test(v.lang || ''));
-      if (ko.length) voice = ko.sort((a, b) => score(b) - score(a))[0];
+      const ko = koVoices();
+      if (!ko.length) return;
+      voice = (preferredURI && ko.find((v) => idOf(v) === preferredURI)) || ko[0];
     }
     if (synth) {
       load();
-      if (synth.addEventListener) synth.addEventListener('voiceschanged', load);
-      else synth.onvoiceschanged = load;
+      const changed = () => { load(); if (onVoicesCb) onVoicesCb(); };
+      if (synth.addEventListener) synth.addEventListener('voiceschanged', changed);
+      else synth.onvoiceschanged = changed;
     }
     // Must be called synchronously inside a tap handler at least once on iOS to unlock speech.
     // Slightly slow and only a touch brighter: a big pitch shift / very slow rate is what makes TTS sound robotic.
-    function say(text, { rate = 0.85, pitch = 1.05, queue = false } = {}) {
+    function say(text, { rate, pitch = 1.05, queue = false, voiceURI } = {}) {
       if (!synth || muted || !text) return;
       if (!voice) load();
       if (!queue && (synth.speaking || synth.pending)) synth.cancel();
       const u = new SpeechSynthesisUtterance(text);
       u.lang = 'ko-KR';
-      if (voice) u.voice = voice;
-      u.rate = rate;
+      const v = (voiceURI && koVoices().find((x) => idOf(x) === voiceURI)) || voice;
+      if (v) u.voice = v;
+      u.rate = rate || baseRate;
       u.pitch = pitch;
       u.volume = 1;
       keep.push(u); if (keep.length > 6) keep.shift();
       try { synth.resume(); } catch (e) {}
       synth.speak(u);
     }
+    // Human-friendly label: "Yuna (프리미엄)" etc.
+    const quality = (v) => {
+      const n = (v.name || '') + ' ' + (v.voiceURI || '');
+      if (/premium|프리미엄/i.test(n)) return '프리미엄';
+      if (/enhanced|향상/i.test(n)) return '향상됨';
+      if (/natural|neural/i.test(n)) return '자연스러움';
+      return '';
+    };
     return {
       say,
       stop() { if (synth) synth.cancel(); },
       setMuted(m) { muted = m; if (m && synth) synth.cancel(); },
+      setPreferred(uri) { preferredURI = uri || null; load(); },
+      setRate(r) { baseRate = r; },
+      currentURI() { if (!voice) load(); return voice ? idOf(voice) : null; },
+      voices() { return koVoices().map((v) => ({ uri: idOf(v), name: v.name, quality: quality(v) })); },
+      onVoices(cb) { onVoicesCb = cb; },
+      supported: !!synth,
     };
   })();
   document.addEventListener('visibilitychange', () => { if (document.hidden) Speech.stop(); });
@@ -732,6 +819,7 @@
   // <Board/>: layered canvases (grid/guide → demo/fx → ink)
   // ---------------------------------------------------------------------------
   const BORDER = 6;
+  const RAIL_GAP = 18;
   const Board = forwardRef(function Board(props, ref) {
     const P = useRef(props);
     P.current = props;
@@ -794,7 +882,11 @@
     // Measure available space → square canvas size
     useEffect(() => {
       const el = holder.current;
-      const measure = (w, h) => setS(Math.max(220, Math.floor(Math.min(w - 2 * BORDER - 8, h - 2 * BORDER - 40))));
+      // Keep room on both sides for the crayon rail so the paper stays centred.
+      const measure = (w, h) => {
+        const rail = P.current.railWidth ? 2 * (P.current.railWidth + RAIL_GAP) : 0;
+        setS(Math.max(220, Math.floor(Math.min(w - rail - 2 * BORDER - 8, h - 2 * BORDER - 40))));
+      };
       const ro = new ResizeObserver((entries) => {
         const r = entries[0].contentRect;
         measure(r.width, r.height);
@@ -845,10 +937,16 @@
       };
       const down = (e) => {
         e.preventDefault();
-        if (P.current.locked) return;
         const now = performance.now();
-        if (e.pointerType === 'pen') lastPen = now;
-        else if (e.pointerType === 'touch' && now - lastPen < 1500) return; // palm while using Pencil
+        if (e.pointerType === 'pen') {
+          lastPen = now;
+          if (P.current.onPen) P.current.onPen();
+        } else if (e.pointerType === 'touch') {
+          // Palm rejection: in Pencil-only mode fingers/palms never draw; otherwise ignore touches
+          // that land shortly after the Pencil was used.
+          if (P.current.penOnly || now - lastPen < 1500) return;
+        }
+        if (P.current.locked) return;
         if (active) {
           if (e.pointerType === 'pen' && active.type !== 'pen') { strokes.current.pop(); renderInk(); }
           else return; // ignore extra fingers
@@ -998,6 +1096,7 @@
           </div>
           ${bubbles.map((b) => html`<span key=${b.k} className="bubble"
               style=${{ width: b.size, height: b.size, left: b.left, top: b.top, '--dx': b.dx, '--dy': b.dy, animationDelay: b.delay }}></span>`)}
+          ${props.rail && html`<div className="absolute top-1/2 -translate-y-1/2" style=${{ right: `calc(100% + ${RAIL_GAP}px)` }}>${props.rail}</div>`}
           ${props.children}
         </div>
       </div>`;
@@ -1012,24 +1111,25 @@
         fill="none" stroke=${color} strokeWidth=${width} strokeLinecap="round" strokeLinejoin="round" />`)}
     </svg>`;
 
-  const BigBtn = ({ onClick, bg, icon, children, pulse, label, disabled }) => html`
+  // Solid (primary) or outlined (secondary) chunky button. Height 64px everywhere.
+  const BigBtn = ({ onClick, bg, fg = '#fff', border, icon, children, pulse, label, disabled, className = '' }) => html`
     <button onClick=${onClick} disabled=${disabled} aria-label=${label || (typeof children === 'string' ? children : '')}
-      className=${`btn3d ${pulse ? 'wiggle' : ''} min-h-[66px] rounded-3xl px-3 flex items-center justify-center gap-2 text-white text-[22px] leading-none`}
-      style=${{ background: bg }}>
+      className=${`btn3d ${pulse ? 'wiggle' : ''} h-[64px] min-w-0 rounded-[22px] px-4 flex items-center justify-center gap-2 text-[22px] leading-none ${className}`}
+      style=${{ background: bg, color: fg, border: border ? `4px solid ${border}` : '4px solid transparent' }}>
       ${icon && html`<${Icon} name=${icon} size=${28} />`}
-      <span className="whitespace-nowrap">${children}</span>
+      ${children && html`<span className="whitespace-nowrap">${children}</span>`}
     </button>`;
 
   const Chip = forwardRef(function Chip({ item, active, count, onClick }, ref) {
     const base = 'relative flex-none rounded-3xl border-4 flex flex-col items-center justify-center transition-transform duration-150 ';
     const look = active ? 'bg-orange-50 border-orange-400 scale-105' : 'bg-white border-orange-100';
-    const w = item.kind === 'word' ? 'min-w-[112px] px-3' : 'w-[88px]';
+    const w = item.kind === 'word' ? 'min-w-[108px] px-3' : 'chip-sq';
     let body;
     if (item.kind === 'line') body = html`<${Frag}><${MiniSvg} strokes=${item.strokes} size=${48} color=${active ? '#F97316' : '#64748B'} /><span className="text-[14px] leading-none mt-0.5 text-slate-500">${item.name}</span><//>`;
     else if (item.kind === 'word') body = html`<${Frag}><span className="text-[34px] leading-none">${item.emoji}</span><span className="text-[22px] leading-none mt-1">${item.word}</span><//>`;
     else body = html`<span className="text-[48px] leading-none" style=${{ color: active ? '#EA580C' : '#4A3F5C' }}>${item.glyph}</span>`;
     return html`
-      <button ref=${ref} onClick=${onClick} className=${base + look + ' ' + w + ' h-[88px]'} aria-label=${item.name || item.word}>
+      <button ref=${ref} onClick=${onClick} className=${base + look + ' ' + w + ' chip'} aria-label=${item.name || item.word}>
         ${body}
         ${count > 0 && html`<span className="absolute -top-2 -right-2 min-w-[30px] h-[30px] px-1.5 rounded-full bg-yellow-300 border-2 border-white text-[15px] text-amber-700 grid place-items-center shadow">★${count > 99 ? '99+' : count}</span>`}
       </button>`;
@@ -1099,11 +1199,27 @@
     const [navId, setNavId] = useState(0);
     const [stamp, setStamp] = useState(0);
     const [muted, setMuted] = useState(() => store.get('monggeul.muted', false));
+    // Parent settings: voice (null = automatic), speaking rate, Pencil-only mode ('auto' | 'on' | 'off')
+    const [prefs, setPrefs] = useState(() => ({ voice: null, rate: 0.85, pen: 'auto', ...store.get('monggeul.prefs', {}) }));
+    const [penSeen, setPenSeen] = useState(false);
+    const [settingsOpen, setSettingsOpen] = useState(false);
+    const [toast, setToast] = useState(null);
     const board = useRef(null);
     const doneRef = useRef(false);
     const timers = useRef([]);
+    const penSeenRef = useRef(false);
 
     useEffect(() => { Speech.setMuted(muted); Sfx.setMuted(muted); store.set('monggeul.muted', muted); }, [muted]);
+    useEffect(() => { Speech.setPreferred(prefs.voice); Speech.setRate(prefs.rate); store.set('monggeul.prefs', prefs); }, [prefs]);
+    useEffect(() => { if (!toast) return; const t = setTimeout(() => setToast(null), 3500); return () => clearTimeout(t); }, [toast]);
+
+    const penOnly = prefs.pen === 'on' || (prefs.pen === 'auto' && penSeen);
+    function onPen() {
+      if (penSeenRef.current) return;
+      penSeenRef.current = true;
+      setPenSeen(true);
+      if (prefs.pen === 'auto') setToast('✏️ 펜슬 전용 모드가 켜졌어요. 손바닥이 닿아도 그려지지 않아요.');
+    }
 
     const isPractice = tab === 'practice';
     const word = tab === 'words' ? ITEMS.words[idx.words] : null;
@@ -1265,7 +1381,7 @@
         ${TABS.map((t) => {
           const on = t.id === tab;
           return html`<button key=${t.id} role="tab" aria-selected=${on} onClick=${() => selectTab(t.id)}
-              className="btn3d h-[72px] rounded-3xl flex items-center justify-center gap-2 text-[24px] border-4"
+              className="btn3d tab-btn rounded-3xl flex items-center justify-center gap-2 text-[24px] border-4"
               style=${on ? { background: t.color, color: '#fff', borderColor: t.color, boxShadow: `0 6px 0 ${t.shadow}` }
                          : { background: '#fff', color: t.shadow, borderColor: '#FFEBD6' }}>
               ${t.icon ? html`<${Icon} name=${t.icon} size=${30} />` : html`<span className="text-[30px] leading-none">${t.glyph}</span>`}
@@ -1277,21 +1393,21 @@
     const catPills = isPractice && html`
       <div className="flex-none flex gap-2 pr-2 border-r-4 border-dashed border-violet-100">
         ${PCATS.map((c, i) => html`<button key=${c.id} onClick=${() => pickCat(i)}
-            className="h-[76px] min-w-[66px] px-2 rounded-2xl text-[21px] border-4"
+            className="chip min-w-[66px] px-2 rounded-2xl text-[21px] border-4"
             style=${i === pCat ? { background: '#A78BFA', color: '#fff', borderColor: '#A78BFA' } : { background: '#fff', color: '#7C3AED', borderColor: '#EDE9FE' }}>${c.label}</button>`)}
       </div>`;
 
     // Model card: what to write
-    let glyph, info;
+    let glyph, label;
     if (word) {
-      glyph = html`<span className="text-[84px] leading-none">${word.emoji}</span>`;
-      info = html`
-        <div className="flex gap-2 justify-center flex-wrap">
+      glyph = html`<span className="text-[66px] leading-none">${word.emoji}</span>`;
+      label = html`
+        <div className="flex gap-2 flex-wrap">
           ${word.syllables.map((s, i) => {
             const isDone = i < syl || (i === syl && done);
             const on = i === syl;
             return html`<button key=${i} onClick=${() => pickSyllable(i)} aria-label=${s.glyph}
-                className="relative w-[64px] h-[64px] rounded-2xl text-[40px] leading-none grid place-items-center border-4"
+                className="relative w-[60px] h-[60px] rounded-2xl text-[36px] leading-none grid place-items-center border-4"
                 style=${{ background: isDone ? '#DCFCE7' : on ? '#FFF7ED' : '#fff', borderColor: on ? '#FB923C' : isDone ? '#86EFAC' : '#F1F5F9', color: on ? '#EA580C' : '#4A3F5C' }}>
                 ${s.glyph}
                 ${isDone && html`<span className="absolute -top-2 -right-2 w-6 h-6 rounded-full bg-green-500 text-white text-[14px] grid place-items-center">✓</span>`}
@@ -1300,64 +1416,70 @@
         </div>`;
     } else {
       glyph = current.kind === 'line'
-        ? html`<${MiniSvg} strokes=${current.strokes} size=${110} color="#FB923C" width=${0.06} />`
-        : html`<span className="text-[104px] leading-none text-orange-500">${current.glyph}</span>`;
-      info = html`<${Frag}>
-        <div className="text-[34px] leading-none">${current.name}</div>
-        ${current.kind !== 'line' && html`<div className="text-[24px] leading-none text-slate-500 mt-2">${current.emoji} ${current.word}</div>`}
+        ? html`<${MiniSvg} strokes=${current.strokes} size=${76} color="#FB923C" width=${0.07} />`
+        : html`<span className="text-[72px] leading-none text-orange-500">${current.glyph}</span>`;
+      label = html`<${Frag}>
+        <div className="text-[32px] leading-none">${current.name}</div>
+        ${current.kind !== 'line' && html`<div className="text-[22px] leading-none text-slate-500">${current.emoji} ${current.word}</div>`}
       <//>`;
     }
-
-    const card = html`
-      <div className="card bg-white rounded-[28px] p-4 soft">
-        <div className="card-inner">
-          <div className="glyph-box">${glyph}</div>
-          <div className="flex-1 min-w-0 flex flex-col items-center gap-2">
-            ${info}
-            <button onClick=${listen} className="btn3d mt-1 h-[60px] px-5 rounded-full bg-sky-400 text-white text-[21px] flex items-center gap-2">
-              <${Icon} name="Volume2" size=${26} /> 들어 보기
-            </button>
-          </div>
-        </div>
-      </div>`;
 
     const filled = reps === 0 ? 0 : ((reps - 1) % 10) + 1;
     const trophies = Math.floor(reps / 10);
     const counter = isPractice && html`
-      <div className="bg-white rounded-[28px] px-4 py-3 soft">
-        <div className="flex items-center justify-between">
-          <div className="text-[36px] text-amber-500 leading-none">⭐ × <span key=${reps} className="pop-in">${reps}</span></div>
-          ${trophies > 0 && html`<div className="text-[26px] text-amber-600">🏆 × ${trophies}</div>`}
+      <div className="counter rounded-[22px] bg-amber-50 px-4 py-2">
+        <div className="flex items-center justify-between gap-3">
+          <div className="text-[32px] text-amber-500 leading-none whitespace-nowrap">⭐ × <span key=${reps} className="pop-in">${reps}</span></div>
+          ${trophies > 0 && html`<div className="text-[22px] text-amber-600 whitespace-nowrap">🏆 × ${trophies}</div>`}
         </div>
-        <div className="flex gap-1 mt-2 justify-between">
+        <div className="flex gap-0.5 mt-1.5">
           ${Array.from({ length: 10 }, (_, i) => html`<span key=${i + '-' + (i < filled ? reps : 0)}
-              className=${'text-[24px] leading-none ' + (i < filled ? 'pop-in' : '')}
+              className=${'text-[18px] leading-none ' + (i < filled ? 'pop-in' : '')}
               style=${{ filter: i < filled ? 'none' : 'grayscale(1) opacity(.25)' }}>⭐</span>`)}
         </div>
       </div>`;
 
-    const actions = html`
-      <div className="actions">
-        <${BigBtn} onClick=${demo} bg="#38BDF8" icon="Play">따라 보기<//>
-        <${BigBtn} onClick=${refresh} bg="#FB923C" icon="RotateCcw">다시 쓰기<//>
-        <${BigBtn} onClick=${check} bg="#22C55E" icon="Check" disabled=${done}>다 했어요<//>
-        ${isPractice
-          ? html`<button onClick=${toggleGrid} aria-pressed=${grid} aria-label="칸 도우미"
-                className="btn3d min-h-[66px] rounded-3xl px-3 flex items-center justify-center gap-2 text-[20px] leading-none border-4"
-                style=${grid ? { background: '#EDE9FE', borderColor: '#A78BFA', color: '#6D28D9' } : { background: '#fff', borderColor: '#E2E8F0', color: '#64748B' }}>
-                <${Icon} name="Grid2x2" size=${26} />
-                <span className="whitespace-nowrap">칸 도우미</span>
-                <span className="ml-1 px-2 py-1 rounded-full text-[15px] text-white" style=${{ background: grid ? '#8B5CF6' : '#94A3B8' }}>${grid ? 'ON' : 'OFF'}</span>
-              </button>`
-          : html`<${BigBtn} onClick=${next} bg="#A78BFA" icon="ChevronRight" pulse=${done && (!word || wordDone)}>
-                ${word ? '다음 낱말' : '다음'}<//>`}
+    const card = html`
+      <div className="card soft">
+        <div className="glyph-box">${glyph}</div>
+        <div className="card-text">
+          <div className="card-label">${label}</div>
+          <${BigBtn} onClick=${listen} bg="#fff" fg="#0284C7" border="#BAE6FD" icon="Volume2" className="flex-none">들어 보기<//>
+        </div>
+        ${counter}
       </div>`;
 
-    const crayons = html`
-      <div className="flex items-center justify-between gap-2 bg-white rounded-[28px] px-3 py-2 soft">
-        ${CRAYONS.map((c) => html`<button key=${c} onClick=${() => { Sfx.pop(); setColor(c); }} aria-label="색깔"
-            className="w-[60px] h-[60px] rounded-full grid place-items-center transition-transform"
-            style=${{ background: c, transform: c === color ? 'scale(1.08)' : 'scale(.86)', boxShadow: c === color ? `0 0 0 4px #fff, 0 0 0 8px ${c}` : 'none' }}>
+    const gridToggle = html`
+      <button onClick=${toggleGrid} aria-pressed=${grid} aria-label="칸 도우미"
+          className="btn3d flex-1 min-w-0 h-[64px] rounded-[22px] px-4 flex items-center justify-center gap-2 text-[21px] leading-none border-4"
+          style=${grid ? { background: '#F5F3FF', borderColor: '#C4B5FD', color: '#6D28D9' } : { background: '#fff', borderColor: '#E2E8F0', color: '#64748B' }}>
+        <${Icon} name="Grid2x2" size=${26} />
+        <span className="whitespace-nowrap">칸 도우미</span>
+        <span className="ml-1 px-2 py-1 rounded-full text-[15px] text-white" style=${{ background: grid ? '#8B5CF6' : '#94A3B8' }}>${grid ? 'ON' : 'OFF'}</span>
+      </button>`;
+
+    // Secondary actions are outlined, the one thing to do next is solid.
+    const controls = html`
+      <div className="actions">
+        <div className="act-row">
+          <${BigBtn} onClick=${demo} bg="#fff" fg="#0284C7" border="#BAE6FD" icon="Play" className="flex-1">따라 보기<//>
+          <${BigBtn} onClick=${check} bg="#22C55E" icon="Check" disabled=${done} className="flex-1">다 했어요<//>
+        </div>
+        <div className="act-row">
+          ${isPractice ? gridToggle : html`<${Frag}>
+            <${BigBtn} onClick=${prev} bg="#fff" fg="#64748B" border="#E2E8F0" icon="ChevronLeft" label="이전" className="w-[72px] flex-none !px-0" />
+            <${BigBtn} onClick=${next} bg="#A78BFA" icon="ChevronRight" pulse=${done && (!word || wordDone)} className="flex-1">
+              ${word ? '다음 낱말' : '다음'}<//>
+          <//>`}
+        </div>
+      </div>`;
+
+    // Crayons live in a vertical rail beside the paper (uses the spare width, keeps the bottom calm)
+    const rail = html`
+      <div className="rail soft" role="radiogroup" aria-label="크레파스 색깔">
+        ${CRAYONS.map((c) => html`<button key=${c} role="radio" aria-checked=${c === color} onClick=${() => { Sfx.pop(); setColor(c); }} aria-label="색깔"
+            className="w-[58px] h-[58px] rounded-full grid place-items-center transition-transform"
+            style=${{ background: c, transform: c === color ? 'scale(1)' : 'scale(.82)', boxShadow: c === color ? `0 0 0 4px #fff, 0 0 0 7px ${c}` : 'none' }}>
             ${c === color && html`<${Icon} name="Check" size=${28} className="text-white" />`}
           </button>`)}
       </div>`;
@@ -1365,16 +1487,20 @@
     return html`
       <div className="h-full flex flex-col"
            style=${{ paddingTop: 'env(safe-area-inset-top)', paddingBottom: 'env(safe-area-inset-bottom)', paddingLeft: 'env(safe-area-inset-left)', paddingRight: 'env(safe-area-inset-right)' }}>
-        <header className="flex items-center gap-3 px-4 pt-3 pb-3">
+        <header className="flex items-center gap-3 px-5 pt-3 pb-3">
           <div className="w-[56px] h-[56px] rounded-2xl grid place-items-center text-[34px] soft flex-none" style=${{ background: 'linear-gradient(135deg,#FECDD3,#FED7AA)' }}>🐣</div>
-          <h1 className="title-grad text-[32px] leading-none whitespace-nowrap">몽글몽글 한글 쓰기</h1>
+          <h1 className="title-grad text-[28px] leading-none whitespace-nowrap">몽글몽글 한글 쓰기</h1>
           <div className="flex-1"></div>
-          <div className="h-[60px] px-5 rounded-full bg-yellow-100 border-4 border-yellow-300 flex items-center gap-2 text-[26px] text-amber-600" aria-label="모은 별">
+          <div className="h-[60px] px-4 rounded-full bg-yellow-100 border-4 border-yellow-300 flex items-center gap-2 text-[24px] text-amber-600 flex-none" aria-label="모은 별">
             <span>⭐</span><span key=${total} className="pop-in">${total}</span>
           </div>
           <button onClick=${() => { setMuted((m) => !m); }} aria-label=${muted ? '소리 켜기' : '소리 끄기'}
                   className="btn3d w-[60px] h-[60px] rounded-full bg-white border-4 border-orange-100 grid place-items-center text-slate-500 flex-none">
             <${Icon} name=${muted ? 'VolumeX' : 'Volume2'} size=${28} />
+          </button>
+          <button onClick=${() => { Sfx.pop(); setSettingsOpen(true); }} aria-label="설정"
+                  className="btn3d w-[60px] h-[60px] rounded-full bg-white border-4 border-orange-100 grid place-items-center text-slate-500 flex-none">
+            <${Icon} name="Settings" size=${28} />
           </button>
           <button onClick=${refresh} className="btn3d h-[60px] px-5 rounded-full bg-orange-400 text-white text-[22px] flex items-center gap-2 flex-none">
             <${Icon} name="RotateCcw" size=${26} /> 다시 쓰기
@@ -1386,15 +1512,13 @@
         <${PickerBar} items=${pickerItems} active=${pickerActive} onPick=${pickItem} progress=${progress} lead=${catPills} />
 
         <div className="workspace">
+          <section className="info">${card}</section>
           <${Board} ref=${board} item=${current} session=${session} showGrid=${showGuide} showGuide=${showGuide}
-                    color=${color} locked=${done} onSuccess=${onSuccess}>
+                    color=${color} locked=${done} onSuccess=${onSuccess} penOnly=${penOnly} onPen=${onPen}
+                    rail=${rail} railWidth=${78}>
             <button onClick=${refresh} aria-label="다시 쓰기"
                     className="btn3d absolute right-5 -bottom-7 z-10 h-[64px] px-6 rounded-full bg-orange-400 text-white text-[22px] flex items-center gap-2 border-4 border-white">
               <${Icon} name="RotateCcw" size=${26} /> 다시 쓰기
-            </button>
-            <button onClick=${prev} aria-label="이전"
-                    className="btn3d absolute left-5 -bottom-7 z-10 w-[64px] h-[64px] rounded-full bg-white text-slate-500 grid place-items-center border-4 border-orange-100">
-              <${Icon} name="ChevronLeft" size=${30} />
             </button>
             ${stamp > 0 && html`
               <div key=${stamp} className="stamp text-center">
@@ -1402,15 +1526,106 @@
                 <div className="text-[36px] text-amber-500 whitespace-nowrap" style=${{ textShadow: '0 3px 0 #fff' }}>참 잘했어요!</div>
               </div>`}
           <//>
-          <aside className=${'side ' + (isPractice ? 'practice' : '')}>
-            ${card}
-            ${counter}
-            ${actions}
-            ${crayons}
-          </aside>
+          <section className="controls">${controls}</section>
         </div>
 
+        ${toast && html`<div key=${toast} className="pop-in fixed left-1/2 top-6 -translate-x-1/2 z-40 px-6 py-3 rounded-full bg-slate-700/90 text-white text-[20px] shadow-lg whitespace-nowrap">${toast}</div>`}
+        ${settingsOpen && html`<${Settings} prefs=${prefs} setPrefs=${setPrefs} penSeen=${penSeen} penOnly=${penOnly} onClose=${() => { Sfx.pop(); setSettingsOpen(false); }} />`}
         ${!started && html`<${Splash} onStart=${start} />`}
+      </div>`;
+  }
+
+  // ---------------------------------------------------------------------------
+  // 설정 (for parents): voice, speaking speed, Pencil-only mode
+  // ---------------------------------------------------------------------------
+  function Settings({ prefs, setPrefs, penSeen, penOnly, onClose }) {
+    const [voices, setVoices] = useState(() => Speech.voices());
+    const [current, setCurrent] = useState(() => Speech.currentURI());
+    useEffect(() => {
+      const upd = () => { setVoices(Speech.voices()); setCurrent(Speech.currentURI()); };
+      Speech.onVoices(upd);
+      const t = setTimeout(upd, 700); // iOS sometimes fills the list late
+      return () => { clearTimeout(t); Speech.onVoices(null); };
+    }, []);
+    useEffect(() => { setCurrent(Speech.currentURI()); }, [prefs.voice]);
+
+    const set = (patch) => { Sfx.pop(); setPrefs((p) => ({ ...p, ...patch })); };
+    const sample = (uri) => Speech.say('안녕! 나랑 같이 한글 써 볼까? 기역! 기차의, 기!', { voiceURI: uri, queue: false });
+    const hasPremium = voices.some((v) => v.quality === '프리미엄' || v.quality === '향상됨');
+
+    const Seg = ({ value, options, onPick }) => html`
+      <div className="grid gap-2" style=${{ gridTemplateColumns: `repeat(${options.length}, 1fr)` }}>
+        ${options.map(([v, text]) => html`<button key=${String(v)} onClick=${() => onPick(v)}
+            className="h-[60px] rounded-2xl border-4 text-[20px]"
+            style=${value === v ? { background: '#FFF7ED', borderColor: '#FB923C', color: '#C2410C' } : { background: '#fff', borderColor: '#F1F5F9', color: '#64748B' }}>${text}</button>`)}
+      </div>`;
+
+    return html`
+      <div className="fixed inset-0 z-50 bg-slate-900/40 grid place-items-center p-6" onClick=${(e) => { if (e.target === e.currentTarget) onClose(); }}>
+        <div className="bg-[#FFF8EE] rounded-[32px] w-full max-w-[640px] max-h-[88vh] flex flex-col shadow-2xl">
+          <div className="flex items-center gap-3 px-6 pt-5 pb-3">
+            <${Icon} name="Settings" size=${30} className="text-orange-400" />
+            <h2 className="text-[30px] flex-1">설정 <span className="text-[18px] text-slate-400">(어른용)</span></h2>
+            <button onClick=${onClose} aria-label="닫기" className="btn3d w-[60px] h-[60px] rounded-full bg-white border-4 border-orange-100 grid place-items-center text-slate-500">
+              <${Icon} name="X" size=${28} />
+            </button>
+          </div>
+
+          <div className="scroll-y px-6 pb-6 flex flex-col gap-6">
+            <section>
+              <h3 className="text-[22px] mb-2">🗣️ 목소리</h3>
+              ${!Speech.supported && html`<p className="text-[18px] text-red-500">이 브라우저는 음성 기능을 지원하지 않아요.</p>`}
+              <div className="flex flex-col gap-2">
+                <button onClick=${() => set({ voice: null })}
+                    className="h-[64px] rounded-2xl border-4 px-4 flex items-center gap-3 text-[20px] text-left"
+                    style=${prefs.voice === null ? { background: '#FFF7ED', borderColor: '#FB923C' } : { background: '#fff', borderColor: '#F1F5F9' }}>
+                  <span className="flex-1">자동 선택 <span className="text-slate-400 text-[16px]">(가장 좋은 목소리)</span></span>
+                </button>
+                ${voices.map((v) => {
+                  const chosen = prefs.voice === v.uri;
+                  const inUse = current === v.uri;
+                  return html`<div key=${v.uri} className="flex gap-2">
+                    <button onClick=${() => set({ voice: v.uri })}
+                        className="flex-1 min-w-0 h-[64px] rounded-2xl border-4 px-4 flex items-center gap-2 text-[20px] text-left"
+                        style=${chosen ? { background: '#FFF7ED', borderColor: '#FB923C' } : { background: '#fff', borderColor: '#F1F5F9' }}>
+                      <span className="truncate">${v.name}</span>
+                      ${v.quality && html`<span className="flex-none px-2 py-0.5 rounded-full bg-violet-100 text-violet-600 text-[15px]">${v.quality}</span>`}
+                      ${inUse && html`<span className="flex-none ml-auto px-2 py-0.5 rounded-full bg-green-100 text-green-700 text-[15px]">사용 중</span>`}
+                    </button>
+                    <button onClick=${() => sample(v.uri)} aria-label=${v.name + ' 미리 듣기'}
+                        className="btn3d flex-none w-[64px] h-[64px] rounded-2xl bg-sky-400 text-white grid place-items-center">
+                      <${Icon} name="Play" size=${26} />
+                    </button>
+                  </div>`;
+                })}
+                ${Speech.supported && voices.length === 0 && html`<p className="text-[18px] text-slate-500">한국어 목소리를 찾는 중이에요… 잠시 뒤 다시 열어 주세요.</p>`}
+              </div>
+              ${!hasPremium && html`
+                <div className="mt-3 rounded-2xl bg-white p-4 text-[17px] leading-relaxed text-slate-600">
+                  <b>Yuna 프리미엄/향상됨</b>이 목록에 없나요?<br/>
+                  ① iPad <b>설정 → 손쉬운 사용 → 읽기 및 말하기 → 음성 → 한국어</b>에서 Yuna (프리미엄)을 내려받고<br/>
+                  ② 이 앱(또는 Safari)을 앱 전환기에서 <b>완전히 닫았다가</b> 다시 열어 주세요.<br/>
+                  <span className="text-slate-400">그래도 목록에 없으면, iPadOS가 웹 페이지에는 그 목소리를 열어 주지 않는 경우예요.</span>
+                </div>`}
+            </section>
+
+            <section>
+              <h3 className="text-[22px] mb-2">🐢 말 빠르기</h3>
+              <${Seg} value=${prefs.rate} onPick=${(r) => { set({ rate: r }); Speech.say('이 빠르기로 말해요.', { rate: r }); }}
+                      options=${[[0.7, '천천히'], [0.85, '보통'], [1.0, '조금 빠르게']]} />
+            </section>
+
+            <section>
+              <h3 className="text-[22px] mb-2">✏️ 펜슬 전용 모드 <span className="text-[16px] text-slate-400">(손바닥 무시)</span></h3>
+              <${Seg} value=${prefs.pen} onPick=${(v) => set({ pen: v })}
+                      options=${[['auto', '자동'], ['on', '항상 켜기'], ['off', '끄기']]} />
+              <p className="text-[16px] text-slate-500 mt-2 leading-relaxed">
+                자동: 애플 펜슬을 한 번 쓰면 그때부터 손가락·손바닥으로는 그려지지 않아요.
+                손가락으로 쓰려면 <b>끄기</b>를 고르세요. (지금: <b>${penOnly ? '켜짐' : '꺼짐'}</b>${prefs.pen === 'auto' && !penSeen ? ', 아직 펜슬을 쓰지 않았어요' : ''})
+              </p>
+            </section>
+          </div>
+        </div>
       </div>`;
   }
 
