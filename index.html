@@ -1191,6 +1191,8 @@
     stageIntro: ['선을 따라서 써 볼까?', '이번엔 점선만 보고 써 볼까?', '이번엔 혼자서 써 볼까?'],
     medal: ['동메달!', '은메달!', '금메달!'],
     nextLetter: '다음 글자도 써 볼까?',
+    // nothing picked yet (entering a subject / a tab): the child chooses what to write
+    pick: { letter: '써 보고 싶은 글자를 골라 볼까?', word: '써 보고 싶은 낱말을 골라 볼까?', line: '그어 보고 싶은 선을 골라 볼까?' },
     // "우유! | 우유의 | 우!"  ·  one-letter words: "소! | 같이 써 볼까?"
     wordIntro: (w, s) => (w.syllables.length > 1 ? `${w.word}! | ${s.speak}` : `${w.word}! | 같이 써 볼까?`),
     wordDone: (w) => `${w.word}! 다 썼어요!`,
@@ -1199,7 +1201,7 @@
   const MILESTONE_MAX = 100; // voice files exist for 5, 10, … 100 repetitions
   function buildPhrases() {
     const out = new Set([SAY.retry, SAY.inkFirst, SAY.almost, SAY.stray, SAY.missing, SAY.joined,
-      ...SAY.stageIntro, ...SAY.medal, SAY.nextLetter, ...PRAISE, ...NUM_KO, ...SUBJECTS.map((x) => x.intro)]);
+      ...SAY.stageIntro, ...SAY.medal, SAY.nextLetter, ...Object.values(SAY.pick), ...PRAISE, ...NUM_KO, ...SUBJECTS.map((x) => x.intro)]);
     [...ITEMS.lines, ...ITEMS.consonants, ...ITEMS.vowels, ...ITEMS.numbers, ...ITEMS.upper, ...ITEMS.lower, ...ITEMS.ewords]
       .forEach((it) => out.add(it.speak));
     ITEMS.words.forEach((w) => {
@@ -1556,6 +1558,7 @@
     function afterStroke() {
       const p = P.current;
       const free = !p.showGuide;
+      if (!p.item) return;
       const res = evaluate(p.item.strokes, strokes.current, { free, allowJoined: !!p.item.allowJoined });
       if (!free) {
         const fresh = res.coveredIdx.filter((i) => !covered.current.has(i));
@@ -1701,7 +1704,7 @@
 
     useImperativeHandle(ref, () => ({
       hasInk: () => strokes.current.length > 0,
-      check: () => evaluate(P.current.item.strokes, strokes.current, { free: !P.current.showGuide, lenient: true, allowJoined: !!P.current.item.allowJoined }),
+      check: () => (P.current.item ? evaluate(P.current.item.strokes, strokes.current, { free: !P.current.showGuide, lenient: true, allowJoined: !!P.current.item.allowJoined }) : { pass: false, reason: 'missing' }),
       clear(animated) {
         stopDemo();
         const s = SR.current;
@@ -1840,13 +1843,15 @@
 
   function PickerBar({ items, active, onPick, progress, levels = {}, lead }) {
     const refs = useRef([]);
+    const strip = useRef(null);
     useEffect(() => {
+      if (active == null) { if (strip.current) strip.current.scrollLeft = 0; return; } // nothing picked: show the start
       const el = refs.current[active];
       if (el && el.scrollIntoView) el.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
     }, [active, items]);
     return html`
       <div className="picker flex items-center px-4 pb-1 min-w-0">
-        <div className="scroll-x flex-1 flex items-center gap-3 pt-3 pb-3 px-2">
+        <div ref=${strip} className="scroll-x flex-1 flex items-center gap-3 pt-3 pb-3 px-2">
           ${lead}
           ${items.map((it, i) => html`<${Chip} key=${it.key} ref=${(el) => (refs.current[i] = el)} item=${it}
               active=${i === active} count=${progress[it.key] || 0} medal=${medalOf(levels[it.key])} onClick=${() => onPick(i)} />`)}
@@ -1882,6 +1887,8 @@
   };
   const MEDALS = ['🥉', '🥈', '🥇'];
   const STAGE_NAMES = ['따라 쓰기', '점선', '혼자 쓰기'];
+  // empty 4-line notebook for 영어 before a letter is picked (same lines as a single letter)
+  const EMPTY_ENGLISH = { key: 'empty-en', strokes: [], lines: [0.125, 0.375, 0.625, 0.875] };
   const STAGE_GOAL = 3; // successes per stage to earn its medal and open the next stage
   const medalOf = (lv) => (!lv ? null : lv[2] >= STAGE_GOAL ? '🥇' : lv[1] >= STAGE_GOAL ? '🥈' : lv[0] >= STAGE_GOAL ? '🥉' : null);
   // Which tab a star belongs to (progress keys: l:선, j:자모, s:/w:낱말, n:숫자)
@@ -2003,11 +2010,13 @@
     const [subjectId, setSubjectId] = useState(null); // null → start screen (pick 한글/숫자/선 긋기)
     const SUB = SUBJECTS.find((x) => x.id === subjectId) || SUBJECTS[0];
     const [tab, setTab] = useState('consonants');
-    const [idx, setIdx] = useState({ lines: 0, consonants: 0, vowels: 0, words: 0, numbers: 0, upper: 0, lower: 0, ewords: 0 });
+    // which item is picked in each tab — null = nothing yet (the child picks; nothing starts by itself)
+    const NONE = { lines: null, consonants: null, vowels: null, words: null, numbers: null, upper: null, lower: null, ewords: null };
+    const [idx, setIdx] = useState(NONE);
     const [syl, setSyl] = useState(0);
     const [pCat, setPCat] = useState(0);
     const [wTheme, setWTheme] = useState(0);
-    const [pIdx, setPIdx] = useState(0);
+    const [pIdx, setPIdx] = useState(null);
     const [grid, setGrid] = useState(true);
     const [color, setColor] = useState(CRAYONS[0]);
     const [done, setDone] = useState(false);
@@ -2052,21 +2061,24 @@
 
     const isPractice = tab === 'practice';
     const tabList = tab === 'words' ? WORD_THEMES[wTheme].items : ITEMS[tab]; // 낱말: only the chosen theme
-    const word = tab === 'words' ? tabList[idx.words] : null;
+    const word = tab === 'words' && idx.words != null ? tabList[idx.words] : null;
     const pList = PCATS.filter((c) => SUB.pcats.includes(c.id));
     const pItems = (pList[pCat] || pList[0]).items;
-    const current = isPractice ? pItems[pIdx] : word ? word.syllables[syl] : ITEMS[tab][idx[tab]];
+    const current = (isPractice ? pItems[pIdx] : word ? word.syllables[syl] : idx[tab] != null ? ITEMS[tab][idx[tab]] : null) || null;
+    // what to ask for while nothing is picked
+    const pickKind = (isPractice ? pList[pCat] && pList[pCat].id : tab) === 'lines' ? 'line'
+      : ['words', 'ewords'].includes(isPractice ? pList[pCat] && pList[pCat].id : tab) ? 'word' : 'letter';
     const pickerItems = isPractice ? pItems : tabList;
     const pickerActive = isPractice ? pIdx : idx[tab];
     const total = useMemo(() => Object.keys(progress).filter((k) => !k.startsWith('w:')).reduce((a, k) => a + progress[k], 0), [progress]);
     // ---- 단계별 연습 (per item; a 낱말 counts as one item across its syllables)
-    const stageKey = word ? word.key : current.key;
+    const stageKey = word ? word.key : current ? current.key : null;
     const lv = levels[stageKey] || [0, 0, 0];
     const stageOpen = (st) => st === 1 || (lv[st - 2] || 0) >= STAGE_GOAL;
     // start at the highest open stage that still lacks its medal (all medals → 🥇 혼자 쓰기)
     const defaultStage = [3, 2, 1].find((st) => stageOpen(st) && (lv[st - 1] || 0) < STAGE_GOAL) || 3;
-    const stage = isPractice ? 0 : stageSel.key === stageKey ? stageSel.stage : defaultStage;
-    const showGuide = isPractice ? grid : stage < 3;        // 🥇 stage 3: no guide, judged by shape
+    const stage = isPractice || !current ? 0 : stageSel.key === stageKey ? stageSel.stage : defaultStage;
+    const showGuide = isPractice ? grid : stage < 3 && !!current; // 🥇 stage 3: no guide, judged by shape
     const showGrid = isPractice ? grid : true;              // the 칸 (cross / 4 lines) stays from stage 1 to 3
     const faint = !isPractice && stage === 2;               // 🥈 stage 2: faint dotted outline only
 
@@ -2144,6 +2156,12 @@
     // Speak the new item's prompt after every navigation
     useEffect(() => {
       if (!subjectId || !navId) return;
+      if (!current) {
+        const ask = SAY.pick[pickKind];
+        Speech.say(introPrefix.current ? introPrefix.current + ' | ' + ask : ask);
+        introPrefix.current = null;
+        return;
+      }
       let line = word && syl === 0 ? SAY.wordIntro(word, current) : current.speak;
       if (stage > 1 && (!word || syl === 0)) line += ' | ' + SAY.stageIntro[stage - 1];
       Speech.say(introPrefix.current ? introPrefix.current + ' | ' + line : line);
@@ -2171,7 +2189,7 @@
       }
       const sub = SUBJECTS.find((x) => x.id === id);
       introPrefix.current = sub.intro;
-      navigate(() => { setSubjectId(id); setTab(sub.tabs[0]); setSyl(0); setReps(0); setPCat(0); setPIdx(0); });
+      navigate(() => { setSubjectId(id); setTab(sub.tabs[0]); setIdx(NONE); setSyl(0); setReps(0); setPCat(0); setPIdx(null); });
     }
     function goHome() {
       Sfx.pop();
@@ -2195,25 +2213,25 @@
     function pickCat(i) {
       Sfx.pop();
       if (i === pCat) return;
-      navigate(() => { setPCat(i); setPIdx(0); setReps(0); });
+      navigate(() => { setPCat(i); setPIdx(null); setReps(0); });
     }
     function pickTheme(i) {
       Sfx.pop();
       if (i === wTheme) return;
-      navigate(() => { setWTheme(i); setIdx((o) => ({ ...o, words: 0 })); setSyl(0); });
+      navigate(() => { setWTheme(i); setIdx((o) => ({ ...o, words: null })); setSyl(0); });
     }
     function next() {
       Sfx.pop();
       navigate(() => {
-        if (isPractice) { setPIdx((i) => (i + 1) % pItems.length); setReps(0); }
-        else { setIdx((o) => ({ ...o, [tab]: (o[tab] + 1) % tabList.length })); setSyl(0); }
+        if (isPractice) { setPIdx((i) => (i == null ? 0 : (i + 1) % pItems.length)); setReps(0); }
+        else { setIdx((o) => ({ ...o, [tab]: o[tab] == null ? 0 : (o[tab] + 1) % tabList.length })); setSyl(0); }
       });
     }
     function prev() {
       Sfx.pop();
       navigate(() => {
-        if (isPractice) { setPIdx((i) => (i - 1 + pItems.length) % pItems.length); setReps(0); }
-        else { setIdx((o) => ({ ...o, [tab]: (o[tab] - 1 + tabList.length) % tabList.length })); setSyl(0); }
+        if (isPractice) { setPIdx((i) => (i == null ? pItems.length - 1 : (i - 1 + pItems.length) % pItems.length)); setReps(0); }
+        else { setIdx((o) => ({ ...o, [tab]: o[tab] == null ? tabList.length - 1 : (o[tab] - 1 + tabList.length) % tabList.length })); setSyl(0); }
       });
     }
     function pickSyllable(i) {
@@ -2233,11 +2251,13 @@
     }
     function listen() {
       Sfx.pop();
+      if (!current) { Speech.say(SAY.pick[pickKind]); return; }
       if (word && syl === 0) Speech.say(SAY.wordIntro(word, current));
       else Speech.say(current.speak);
     }
     function demo() {
       Sfx.pop();
+      if (!current) { Speech.say(SAY.pick[pickKind]); return; }
       if (board.current) board.current.demo();
     }
     function check() {
@@ -2386,7 +2406,10 @@
 
     // Model card: what to write
     let glyph, label;
-    if (word) {
+    if (!current) {
+      glyph = html`<span className="text-[3.5rem] leading-none">👆</span>`;
+      label = html`<div className="text-[1.375rem] leading-snug text-slate-500">${{ letter: '써 보고 싶은 글자를', word: '써 보고 싶은 낱말을', line: '그어 보고 싶은 선을' }[pickKind]}<br/>위에서 골라 볼까요?</div>`;
+    } else if (word) {
       glyph = html`<span className="text-[4.125rem] leading-none">${word.emoji}</span>`;
       label = html`
         <div className="flex gap-2 flex-wrap">
@@ -2448,8 +2471,8 @@
         <div className="glyph-box">${glyph}</div>
         <div className="card-text">
           <div className="card-label">${label}</div>
-          <${BigBtn} onClick=${listen} bg="#fff" fg="#0284C7" border="#BAE6FD" icon="Volume2" className="flex-none">들어 보기<//>
-          ${stageChips}
+          ${current && html`<${BigBtn} onClick=${listen} bg="#fff" fg="#0284C7" border="#BAE6FD" icon="Volume2" className="flex-none">들어 보기<//>`}
+          ${current && stageChips}
         </div>
         ${counter}
       </div>`;
@@ -2470,8 +2493,8 @@
     const controls = html`
       <div className="actions">
         <div className="act-row">
-          <${BigBtn} onClick=${demo} bg="#fff" fg="#0284C7" border="#BAE6FD" icon="Play" className="flex-1 o1">따라 보기<//>
-          <${BigBtn} onClick=${check} bg="#22C55E" icon="Check" disabled=${done} className="flex-1 o2">다 했어요<//>
+          <${BigBtn} onClick=${demo} bg="#fff" fg="#0284C7" border="#BAE6FD" icon="Play" disabled=${!current} className="flex-1 o1">따라 보기<//>
+          <${BigBtn} onClick=${check} bg="#22C55E" icon="Check" disabled=${done || !current} className="flex-1 o2">다 했어요<//>
         </div>
         <div className="act-row">
           ${isPractice ? gridToggle : html`<${Frag}>
@@ -2535,9 +2558,16 @@
 
         <div className="workspace">
           <section className="info">${card}</section>
-          <${Board} ref=${board} item=${current} session=${session} showGrid=${showGrid} showGuide=${showGuide} faint=${faint}
-                    color=${color} locked=${done} onSuccess=${onSuccess} penOnly=${penOnly} onPen=${onPen}
+          <${Board} ref=${board} item=${current || (SUB.id === 'english' ? EMPTY_ENGLISH : null)} session=${session} showGrid=${showGrid} showGuide=${showGuide} faint=${faint}
+                    color=${color} locked=${done || !current} onSuccess=${onSuccess} penOnly=${penOnly} onPen=${onPen}
                     rail=${crayonsInRow ? null : crayons} railRem=${crayonsInRow ? 0 : 4.875}>
+            ${!current && html`
+              <div className="absolute inset-0 grid place-items-center pointer-events-none" style=${{ zIndex: 4 }}>
+                <div className="text-center px-4">
+                  <div className="float text-[4rem] leading-none">👆</div>
+                  <div className="text-[1.5rem] text-slate-500 mt-2">${{ letter: '위에서 글자를 골라 볼까요?', word: '위에서 낱말을 골라 볼까요?', line: '위에서 선을 골라 볼까요?' }[pickKind]}</div>
+                </div>
+              </div>`}
             ${stamp > 0 && html`
               <div key=${stamp} className="stamp text-center">
                 <div className="text-[9.375rem] leading-none" style=${{ filter: 'drop-shadow(0 8px 0 rgba(234,179,8,.35))' }}>⭐</div>

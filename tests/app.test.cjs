@@ -92,7 +92,15 @@ function expect(name, ok, detail = '') { checks++; if (!ok) failures.push(`${nam
   expect('old stars moved into profile "우리 아이"', stars()['j:ㄷ'] === 4 && stars()['n:3'] === 2, JSON.stringify(stars()));
   card('한글').click(); await sleep(100);
   expect('한글 tabs = 자음·모음·낱말·무한 반복', $$('nav.tabs [role=tab]').map((b) => b.textContent.trim()).join(',') === 'ㄱ자음,ㅏ모음,가낱말,무한 반복', $$('nav.tabs [role=tab]').map((b) => b.textContent.trim()).join(','));
-  expect('says "한글 써 볼까?" then the first letter', said().slice(-4).join(' ') === '한글 써 볼까? 기역! 기차의 기!', said().slice(-4).join(' '));
+  // nothing starts by itself: the child picks a letter first
+  expect('entering 한글: nothing picked, asks to choose', said().slice(-2).join('|') === '한글 써 볼까?|써 보고 싶은 글자를 골라 볼까?', said().slice(-2).join('|'));
+  expect('no chip is selected', !$$('.scroll-x button').some((b) => b.className.includes('border-orange-400')));
+  expect('paper says "위에서 글자를 골라 볼까요?" and 다 했어요 is off', doc.querySelector('.board-area').textContent.includes('골라 볼까요') && btn('다 했어요', '.controls').disabled);
+  draw(box(C_BOX, [[[0.08, 0.12], [0.9, 0.12], [0.9, 0.94]]]));
+  await sleep(60);
+  expect('drawing before picking does nothing', !doc.querySelector('.stamp') && confetti === 0);
+  $$('.scroll-x button').find((b) => b.textContent.trim() === 'ㄱ').click(); await sleep(100);
+  expect('picking ㄱ says the letter', said().slice(-3).join(' ') === '기역! 기차의 기!', said().slice(-3).join(' '));
 
   // ---- 따라 쓰기: ㄱ traced → 참 잘했어요
   draw(box(C_BOX, [[[0.08, 0.12], [0.9, 0.12], [0.9, 0.94]]]));
@@ -152,6 +160,8 @@ function expect(name, ok, detail = '') { checks++; if (!ok) failures.push(`${nam
 
   // ---- 무한 반복 + 칸 도우미 OFF (free writing)
   tab('무한 반복').click(); await sleep(80);
+  expect('무한 반복 also starts with nothing picked', !doc.querySelector('.counter') || btn('다 했어요', '.controls').disabled);
+  $$('.scroll-x button').find((b) => b.getAttribute('aria-label') === '기역').click(); await sleep(80);
   btn('칸 도우미').click(); await sleep(60);
   expect('칸 도우미 toggles OFF', btn('칸 도우미').textContent.includes('OFF'));
   draw(box([0.5, 0.5, 0.8, 0.8], [[[0.08, 0.12], [0.9, 0.12], [0.9, 0.94]]]));
@@ -219,9 +229,11 @@ function expect(name, ok, detail = '') { checks++; if (!ok) failures.push(`${nam
   expect('🏠 returns to the start screen', !!card('영어'));
   card('영어').click(); await sleep(120);
   expect('영어 tabs = 대문자·소문자·단어·무한 반복', $$('nav.tabs [role=tab]').map((b) => b.textContent.trim()).join(',') === 'A대문자,a소문자,단어,무한 반복', $$('nav.tabs [role=tab]').map((b) => b.textContent.trim()).join(','));
-  const last4 = spoken.slice(-4);
-  expect('says "영어 써 볼까? … 대문자 … Ay! … apple!"', last4.map((x) => x.text).join('|') === '영어 써 볼까?|대문자|Ay!|apple!', last4.map((x) => x.text).join('|'));
-  expect('English parts use an English voice', last4[2].lang === 'en-US' && last4[3].lang === 'en-US' && last4[1].lang === 'ko-KR', last4.map((x) => x.lang).join(','));
+  expect('entering 영어 asks to choose', said().slice(-2).join('|') === '영어 써 볼까?|써 보고 싶은 글자를 골라 볼까?', said().slice(-2).join('|'));
+  $$('.scroll-x button').find((b) => b.textContent.trim() === 'A').click(); await sleep(100);
+  const last3 = spoken.slice(-3);
+  expect('picking A says "대문자 … Ay! … apple!"', last3.map((x) => x.text).join('|') === '대문자|Ay!|apple!', last3.map((x) => x.text).join('|'));
+  expect('English parts use an English voice', last3[1].lang === 'en-US' && last3[2].lang === 'en-US' && last3[0].lang === 'ko-KR', last3.map((x) => x.lang).join(','));
   expect('26 capital letters', $$('.scroll-x button').length === 26, $$('.scroll-x button').length);
   tab('단어').click(); await sleep(80);
   expect('32 English words', $$('.scroll-x button').length === 32, $$('.scroll-x button').length);
