@@ -70,7 +70,9 @@ async function measure(w, h, subject) {
     const vw = d.documentElement.clientWidth, vh = d.documentElement.clientHeight;
     const startOff = [...d.querySelectorAll('.fixed.scroll-y button')].filter((b) => b.getBoundingClientRect().bottom > vh + 1).length;
     card.click();
-    await sleep(700);
+    // wait until the paper has measured itself (it sizes to the space it gets)
+    for (let i = 0; i < 30; i++) { await sleep(150); const p = d.querySelector('.pad'); if (p && p.getBoundingClientRect().width > 40) break; }
+    await sleep(250);
     const pad = d.querySelector('.pad').getBoundingClientRect();
     const name = (b) => (b.getAttribute('aria-label') || b.textContent.trim() || '?').slice(0, 10);
     const buttons = [...d.querySelectorAll('button')].filter((b) => b.getBoundingClientRect().width);

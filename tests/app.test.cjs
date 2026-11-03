@@ -180,6 +180,40 @@ function expect(name, ok, detail = '') { checks++; if (!ok) failures.push(`${nam
   btn('친구 2').click(); await sleep(100);
   expect('switch profile via header (친구 2 has 0 stars)', $$('header button').find((b) => (b.getAttribute('aria-label') || '').includes('모은 별')).textContent.includes('0'));
 
+  // ---- 단계별 연습 (친구 2 has no medals yet): 3 wins → 🥉 → stage 2 (점선) → 3 wins → 🥈 → stage 3 (혼자)
+  tab('자음').click(); await sleep(80);
+  $$('.scroll-x button').find((b) => b.textContent.trim() === 'ㅋ').click(); await sleep(120);
+  const chips = () => $$('.stage-chip');
+  const stageNow = () => chips().findIndex((c) => c.getAttribute('aria-pressed') === 'true') + 1;
+  expect('new letter starts at stage 1 (🥉 따라 쓰기)', stageNow() === 1, stageNow());
+  expect('stages 2 and 3 are locked at first', chips()[1].className.includes('locked') && chips()[2].className.includes('locked'));
+  chips()[2].click(); await sleep(40);
+  expect('tapping a locked stage keeps stage 1 and explains', stageNow() === 1 && doc.body.textContent.includes('🔒'));
+  const K = box(C_BOX, [[[0.08, 0.1], [0.9, 0.1], [0.9, 0.94]], [[0.1, 0.5], [0.9, 0.5]]]);
+  // win(): trace ㅋ; then (unless it's the medal win) press 다시 쓰기 for the next try
+  const win = async (thenRefresh = true) => { draw(K); await sleep(80); const ok = btn('다 했어요', '.controls').disabled; if (thenRefresh) { btn('다시 쓰기').click(); await sleep(600); } return ok; };
+  expect('stage 1: three wins', (await win()) && (await win()) && (await win(false)));
+  await sleep(900);
+  expect('3rd win → 🥉 동메달 + "이번엔 점선만 보고 써 볼까?"', said().slice(-2).join('|') === '동메달!|이번엔 점선만 보고 써 볼까?', said().slice(-2).join('|'));
+  expect('during the celebration the paper stays on stage 1', stageNow() === 1, stageNow());
+  await sleep(3000);
+  expect('then moves on to stage 2 (🥈 점선) by itself', stageNow() === 2 && !btn('다 했어요', '.controls').disabled, stageNow());
+  expect('stage 2 still judges position: tracing ㅋ passes', await win());
+  expect('stage 2: two more wins', (await win()) && (await win(false)));
+  btn('다시 쓰기').click(); await sleep(100); // child taps 다시 쓰기 during the 은메달 celebration
+  expect('다시 쓰기 during the celebration goes straight to stage 3 (🥇 혼자 쓰기)', stageNow() === 3 && said().slice(-1)[0] === '이번엔 혼자서 써 볼까?', `${stageNow()} / ${said().slice(-1)[0]}`);
+  await sleep(500);
+  draw(box([0.55, 0.55, 0.85, 0.85], [[[0.08, 0.1], [0.9, 0.1], [0.9, 0.94]], [[0.1, 0.5], [0.9, 0.5]]]));
+  await sleep(80);
+  expect('stage 3 judges shape only: a small ㅋ in the corner passes', btn('다 했어요', '.controls').disabled);
+  const kChip = () => $$('.scroll-x button').find((b) => b.getAttribute('aria-label') === '키읔');
+  expect('the ㅋ chip shows its 🥈 medal', kChip().textContent.includes('🥈'), kChip().textContent);
+  expect('medals saved per child', JSON.stringify(JSON.parse(w.localStorage.getItem('monggeul.levels.' + w.localStorage.getItem('monggeul.activeProfile').replace(/"/g, '')))['j:ㅋ']) === '[3,3,1]');
+  byLabel('설정').click(); await sleep(120);
+  await hold($$('.fixed button').find((b) => b.textContent.trim().startsWith('자음')), 3300);
+  byLabel('닫기').click(); await sleep(80);
+  expect('별·메달 지우기 (자음) also removes the ㅋ medal', !kChip().textContent.includes('🥈'), kChip().textContent);
+
   // ---- 🏠 → 영어
   byLabel('처음으로').click(); await sleep(80);
   expect('🏠 returns to the start screen', !!card('영어'));

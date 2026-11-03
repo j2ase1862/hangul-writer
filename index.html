@@ -125,6 +125,17 @@
   .card-label { min-width: 0; display: flex; flex-direction: column; gap: 0.375rem; }
   .actions { display: flex; gap: 0.875rem; }
   .act-row { display: flex; gap: 0.875rem; flex: 1 1 0; min-width: 0; }
+  /* 단계 buttons (🥉 따라 쓰기 · 🥈 점선 · 🥇 혼자 쓰기) */
+  .stages { display: flex; gap: 0.375rem; flex: none; }
+  .stage-chip { min-width: 42px; min-height: 42px; padding: 0.25rem 0.5rem; border-radius: 0.875rem; border: 3px solid #F1F5F9; background: #fff;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.125rem; color: #64748B; touch-action: none; }
+  .stage-chip.on { border-color: #FB923C; background: #FFF7ED; color: #C2410C; }
+  .stage-chip.locked { opacity: 0.55; }
+  .stage-chip .medal { font-size: 1.375rem; line-height: 1; }
+  .stage-chip .dots { display: flex; gap: 2px; }
+  .stage-chip .dots i { width: 6px; height: 6px; border-radius: 50%; background: #E2E8F0; }
+  .stage-chip .dots i.f { background: #F59E0B; }
+  .stage-chip .stage-name { font-size: 0.75rem; line-height: 1; white-space: nowrap; }
   .rail { display: flex; flex-direction: column; gap: 0.625rem; padding: 0.625rem; background: #fff; border-radius: 2.5rem; }
 
   /* --- wide: paper on the left, card + buttons in a side column --- */
@@ -156,6 +167,11 @@
   [data-layout=tall-narrow] .o1 .btn-label, [data-layout=tall-narrow] .o3 .btn-label,
   [data-layout=tall-narrow] .o4 .btn-label, [data-layout=tall-narrow] .o5 .btn-label { display: none; }
   [data-layout=tall-narrow] .o2 { flex: 2 1 0; }
+  /* phones: the card keeps 들어 보기 + the 3 stage buttons on one line */
+  [data-layout=tall-narrow] .card .btn-label, [data-layout=wide-short] .card .btn-label,
+  [data-layout=tall-narrow] .stage-name, [data-layout=wide-short] .stage-name { display: none; }
+  [data-layout=tall-narrow] .stage-chip, [data-layout=wide-short] .stage-chip { padding: 0.125rem 0.25rem; }
+  [data-layout=tall-narrow] .card-label, [data-layout=wide-short] .card-label { flex: 1 1 auto; overflow: hidden; }
   [data-layout=tall-narrow] .workspace { padding: 0.25rem 0.75rem 0.75rem; gap: 0.625rem; }
   [data-layout=tall-narrow] .crayon-row { display: flex; justify-content: center; }
 
@@ -192,6 +208,11 @@
     [data-layout=wide-short] .glyph-box { display: none; }
     [data-layout=wide-short] .topbar { padding-top: 0.25rem; padding-bottom: 0.25rem; }
     [data-layout=wide-short] .topbar .refresh-btn { display: none; } /* 다시 쓰기 is in the button row below */
+  }
+  /* short portrait phones (e.g. 320×568): drop the big letter tile from the card — the paper needs the room */
+  @media (max-height: 700px) {
+    [data-layout=tall-narrow] .glyph-box { display: none; }
+    [data-layout=tall-narrow] .card { padding-top: 0.375rem; padding-bottom: 0.375rem; }
   }
   /* tiny landscape (≈320px tall): all five buttons in one icon row */
   @media (max-height: 340px) {
@@ -1134,6 +1155,10 @@
     stray: '선 밖에 그은 곳이 있어요. 다시 써 볼까?',
     missing: '아직 안 쓴 획이 있어요. 마저 써 볼까?',
     joined: '획을 하나씩 나눠서 써 볼까?',
+    // 단계별 연습: 🥉 따라 쓰기 → 🥈 점선 → 🥇 혼자 쓰기 (3번 성공하면 메달 + 다음 단계)
+    stageIntro: ['선을 따라서 써 볼까?', '이번엔 점선만 보고 써 볼까?', '이번엔 혼자서 써 볼까?'],
+    medal: ['동메달!', '은메달!', '금메달!'],
+    nextLetter: '다음 글자도 써 볼까?',
     // "우유! | 우유의 | 우!"  ·  one-letter words: "소! | 같이 써 볼까?"
     wordIntro: (w, s) => (w.syllables.length > 1 ? `${w.word}! | ${s.speak}` : `${w.word}! | 같이 써 볼까?`),
     wordDone: (w) => `${w.word}! 다 썼어요!`,
@@ -1141,7 +1166,8 @@
   };
   const MILESTONE_MAX = 100; // voice files exist for 5, 10, … 100 repetitions
   function buildPhrases() {
-    const out = new Set([SAY.retry, SAY.inkFirst, SAY.almost, SAY.stray, SAY.missing, SAY.joined, ...PRAISE, ...NUM_KO, ...SUBJECTS.map((x) => x.intro)]);
+    const out = new Set([SAY.retry, SAY.inkFirst, SAY.almost, SAY.stray, SAY.missing, SAY.joined,
+      ...SAY.stageIntro, ...SAY.medal, SAY.nextLetter, ...PRAISE, ...NUM_KO, ...SUBJECTS.map((x) => x.intro)]);
     [...ITEMS.lines, ...ITEMS.consonants, ...ITEMS.vowels, ...ITEMS.numbers, ...ITEMS.upper, ...ITEMS.lower, ...ITEMS.ewords]
       .forEach((it) => out.add(it.speak));
     ITEMS.words.forEach((w) => {
@@ -1299,7 +1325,7 @@
     c.restore();
   }
 
-  function drawGuide(c, S, item, { showGrid, showGuide, covered }) {
+  function drawGuide(c, S, item, { showGrid, showGuide, covered, faint }) {
     c.clearRect(0, 0, S, S);
     if (showGrid && item && item.lines) {
       // 영어 4선 노트: top · middle (dashed) · baseline (red) · bottom
@@ -1337,6 +1363,17 @@
 
     const list = item.strokes;
     const trace = (s) => { c.beginPath(); s.forEach((p, i) => (i ? c.lineTo(p[0] * S, p[1] * S) : c.moveTo(p[0] * S, p[1] * S))); };
+    if (faint) {
+      // 2단계 (점선): just a light grey dotted outline — no colours, numbers or arrows
+      c.save();
+      c.lineCap = 'round'; c.lineJoin = 'round';
+      c.setLineDash([0.01, S * 0.022]);
+      c.lineWidth = S * 0.012;
+      c.strokeStyle = 'rgba(100,116,139,0.5)';
+      list.forEach((s) => { trace(s); c.stroke(); });
+      c.restore();
+      return;
+    }
     c.save();
     c.lineCap = 'round'; c.lineJoin = 'round';
     // 1) soft wide tracks
@@ -1459,7 +1496,7 @@
       const c = ctxOf(gC);
       if (!c || !SR.current) return;
       const p = P.current;
-      drawGuide(c, SR.current, p.item, { showGrid: p.showGrid, showGuide: p.showGuide, covered: covered.current });
+      drawGuide(c, SR.current, p.item, { showGrid: p.showGrid, showGuide: p.showGuide, covered: covered.current, faint: p.faint });
     }
     function inkStyle(c, color) {
       c.strokeStyle = color; c.fillStyle = color;
@@ -1505,7 +1542,7 @@
       const b = lastBox.current;
       if (!b) return;
       const rail = P.current.railRem ? P.current.railRem * remPx() + RAIL_GAP : 0;
-      setS(Math.max(160, Math.floor(Math.min(b.w - rail - 2 * BORDER - 8, b.h - 2 * BORDER - 14))));
+      setS(Math.max(96, Math.floor(Math.min(b.w - rail - 2 * BORDER - 8, b.h - 2 * BORDER - 14)))); // shrink rather than overlap other controls
     };
     useEffect(() => {
       const ro = new ResizeObserver((entries) => {
@@ -1542,7 +1579,7 @@
       renderGuide();
     }, [props.session]);
 
-    useEffect(() => { renderGuide(); }, [props.item, props.showGrid, props.showGuide]);
+    useEffect(() => { renderGuide(); }, [props.item, props.showGrid, props.showGuide, props.faint]);
 
     // Redraw guide once the Jua webfont is ready (badge numbers)
     useEffect(() => {
@@ -1743,7 +1780,7 @@
       ${children && html`<span className="btn-label whitespace-nowrap">${children}</span>`}
     </button>`;
 
-  const Chip = forwardRef(function Chip({ item, active, count, onClick }, ref) {
+  const Chip = forwardRef(function Chip({ item, active, count, medal, onClick }, ref) {
     const base = 'relative flex-none rounded-3xl border-4 flex flex-col items-center justify-center transition-transform duration-150 ';
     const look = active ? 'bg-orange-50 border-orange-400 scale-105' : 'bg-white border-orange-100';
     const isWord = item.kind === 'word' || item.kind === 'eword';
@@ -1755,6 +1792,7 @@
     return html`
       <button ref=${ref} onClick=${onClick} className=${base + look + ' ' + w + ' chip'} aria-label=${item.name || item.word}>
         ${body}
+        ${medal && html`<span className="absolute -top-2.5 -left-2 text-[1.5rem] leading-none drop-shadow" aria-label="메달">${medal}</span>`}
         ${count > 0 && html`<span className="absolute -top-2 -right-2 min-w-[1.875rem] h-[1.875rem] px-1.5 rounded-full bg-yellow-300 border-2 border-white text-[0.9375rem] text-amber-700 grid place-items-center shadow">★${count > 99 ? '99+' : count}</span>`}
       </button>`;
   });
@@ -1768,7 +1806,7 @@
       ${Array.from({ length: n / 10 }, (_, i) => html`<span key=${i} className="px-1.5 py-0.5 rounded-lg bg-red-50 border-2 border-red-200 text-[0.875rem] leading-none whitespace-nowrap">🍎10</span>`)}</div>`;
   }
 
-  function PickerBar({ items, active, onPick, progress, lead }) {
+  function PickerBar({ items, active, onPick, progress, levels = {}, lead }) {
     const refs = useRef([]);
     useEffect(() => {
       const el = refs.current[active];
@@ -1779,7 +1817,7 @@
         <div className="scroll-x flex-1 flex items-center gap-3 pt-3 pb-3 px-2">
           ${lead}
           ${items.map((it, i) => html`<${Chip} key=${it.key} ref=${(el) => (refs.current[i] = el)} item=${it}
-              active=${i === active} count=${progress[it.key] || 0} onClick=${() => onPick(i)} />`)}
+              active=${i === active} count=${progress[it.key] || 0} medal=${medalOf(levels[it.key])} onClick=${() => onPick(i)} />`)}
         </div>
       </div>`;
   }
@@ -1805,8 +1843,15 @@
     setActive: (id) => store.set('monggeul.activeProfile', id),
     progress: (id) => store.get('monggeul.progress.' + id, {}),
     saveProgress: (id, p) => store.set('monggeul.progress.' + id, p),
-    drop(id) { try { localStorage.removeItem('monggeul.progress.' + id); } catch (e) {} },
+    // 단계별 연습: levels[key] = [successes at 🥉 stage 1, 🥈 stage 2, 🥇 stage 3]
+    levels: (id) => store.get('monggeul.levels.' + id, {}),
+    saveLevels: (id, l) => store.set('monggeul.levels.' + id, l),
+    drop(id) { try { localStorage.removeItem('monggeul.progress.' + id); localStorage.removeItem('monggeul.levels.' + id); } catch (e) {} },
   };
+  const MEDALS = ['🥉', '🥈', '🥇'];
+  const STAGE_NAMES = ['따라 쓰기', '점선', '혼자 쓰기'];
+  const STAGE_GOAL = 3; // successes per stage to earn its medal and open the next stage
+  const medalOf = (lv) => (!lv ? null : lv[2] >= STAGE_GOAL ? '🥇' : lv[1] >= STAGE_GOAL ? '🥈' : lv[0] >= STAGE_GOAL ? '🥉' : null);
   // Which tab a star belongs to (progress keys: l:선, j:자모, s:/w:낱말, n:숫자)
   const STAR_CATS = [['lines', '선 긋기'], ['consonants', '자음'], ['vowels', '모음'], ['words', '낱말'], ['numbers', '숫자'], ['english', '영어']];
   function catOf(key) {
@@ -1939,6 +1984,8 @@
     const [profiles, setProfiles] = useState(boot.list);
     const [profileId, setProfileId] = useState(boot.id);
     const [progress, setProgress] = useState(() => Profiles.progress(boot.id));
+    const [levels, setLevels] = useState(() => Profiles.levels(boot.id));
+    const [stageSel, setStageSel] = useState({ key: null, stage: 1 }); // the stage the child picked for an item
     const [pickerOpen, setPickerOpen] = useState(false);
     const profile = profiles.find((p) => p.id === profileId) || profiles[0];
     const [reps, setReps] = useState(0);
@@ -1957,6 +2004,7 @@
     const penSeenRef = useRef(false);
     const audioReady = useRef(false);
     const introPrefix = useRef(null); // spoken before the first item after picking a subject
+    const pendingStage = useRef(null); // medal just earned → { key, stage } to move to after the celebration
 
     useEffect(() => { Speech.setMuted(muted); Sfx.setMuted(muted); store.set('monggeul.muted', muted); }, [muted]);
     useEffect(() => { Speech.setPreferred(prefs.voice); Speech.setRate(prefs.rate); Clips.setSpeed(prefs.rate); Clips.setEnabled(prefs.clips !== false); store.set('monggeul.prefs', prefs); }, [prefs]);
@@ -1979,13 +2027,23 @@
     const pickerItems = isPractice ? pItems : tabList;
     const pickerActive = isPractice ? pIdx : idx[tab];
     const total = useMemo(() => Object.keys(progress).filter((k) => !k.startsWith('w:')).reduce((a, k) => a + progress[k], 0), [progress]);
-    const showGuide = isPractice ? grid : true;
+    // ---- 단계별 연습 (per item; a 낱말 counts as one item across its syllables)
+    const stageKey = word ? word.key : current.key;
+    const lv = levels[stageKey] || [0, 0, 0];
+    const stageOpen = (st) => st === 1 || (lv[st - 2] || 0) >= STAGE_GOAL;
+    // start at the highest open stage that still lacks its medal (all medals → 🥇 혼자 쓰기)
+    const defaultStage = [3, 2, 1].find((st) => stageOpen(st) && (lv[st - 1] || 0) < STAGE_GOAL) || 3;
+    const stage = isPractice ? 0 : stageSel.key === stageKey ? stageSel.stage : defaultStage;
+    const showGuide = isPractice ? grid : stage < 3;        // 🥇 stage 3: no guide, judged by shape
+    const showGrid = isPractice ? grid : true;              // the 칸 (cross / 4 lines) stays from stage 1 to 3
+    const faint = !isPractice && stage === 2;               // 🥈 stage 2: faint dotted outline only
 
     // ---- helpers
     const clearTimers = () => { timers.current.forEach(clearTimeout); timers.current = []; };
     const later = (ms, fn) => timers.current.push(setTimeout(fn, ms));
     const navigate = (update) => {
       clearTimers();
+      pendingStage.current = null;
       doneRef.current = false;
       setDone(false);
       setWordDone(false);
@@ -2005,6 +2063,7 @@
       Profiles.setActive(id);
       setProfileId(id);
       setProgress(Profiles.progress(id));
+      setLevels(Profiles.levels(id));
       navigate(() => setReps(0));
       const p = profiles.find((x) => x.id === id);
       if (p) setToast(`${p.icon} ${p.name} 차례예요!`);
@@ -2029,6 +2088,7 @@
           Profiles.setActive(list[0].id);
           setProfileId(list[0].id);
           setProgress(Profiles.progress(list[0].id));
+          setLevels(Profiles.levels(list[0].id));
         }
         setToast('프로필을 지웠어요');
       },
@@ -2039,16 +2099,21 @@
         const kept = cat ? Object.fromEntries(Object.entries(src).filter(([k]) => catOf(k) !== cat)) : {};
         Profiles.saveProgress(id, kept);
         if (id === profileId) setProgress(kept);
+        const lsrc = id === profileId ? levels : Profiles.levels(id);
+        const lkept = cat ? Object.fromEntries(Object.entries(lsrc).filter(([k]) => catOf(k) !== cat)) : {};
+        Profiles.saveLevels(id, lkept);
+        if (id === profileId) setLevels(lkept);
         Sfx.clear();
         const label = cat ? STAR_CATS.find(([c]) => c === cat)[1] + ' ' : '';
-        setToast(`🗑️ ${label}별 기록을 지웠어요`);
+        setToast(`🗑️ ${label}별·메달 기록을 지웠어요`);
       },
     };
 
     // Speak the new item's prompt after every navigation
     useEffect(() => {
       if (!subjectId || !navId) return;
-      const line = word && syl === 0 ? SAY.wordIntro(word, current) : current.speak;
+      let line = word && syl === 0 ? SAY.wordIntro(word, current) : current.speak;
+      if (stage > 1 && (!word || syl === 0)) line += ' | ' + SAY.stageIntro[stage - 1];
       Speech.say(introPrefix.current ? introPrefix.current + ' | ' + line : line);
       introPrefix.current = null;
     }, [navId]);
@@ -2070,6 +2135,7 @@
         Profiles.setActive(pid);
         setProfileId(pid);
         setProgress(Profiles.progress(pid));
+        setLevels(Profiles.levels(pid));
       }
       const sub = SUBJECTS.find((x) => x.id === id);
       introPrefix.current = sub.intro;
@@ -2124,6 +2190,8 @@
     }
     function refresh() {
       clearTimers();
+      const moved = goToPendingStage();
+      if (moved) { Sfx.clear(); Speech.say(SAY.stageIntro[moved - 1]); return; }
       if (board.current) board.current.clear(true);
       Sfx.clear();
       Speech.say(SAY.retry);
@@ -2188,17 +2256,67 @@
           burst(false);
           later(1500, () => navigate(() => setSyl((s) => s + 1))); // next syllable's prompt is spoken on arrival
         } else {
-          burst(true);
           bump(word.key);
           setWordDone(true);
-          Sfx.clap();
-          later(700, () => Speech.say(SAY.wordDone(word)));
+          if (addLevel() === STAGE_GOAL) earnMedal();
+          else { burst(true); Sfx.clap(); later(700, () => Speech.say(SAY.wordDone(word))); }
         }
+      } else if (addLevel() === STAGE_GOAL) {
+        earnMedal();
       } else {
         burst(false);
         Sfx.clap();
         later(700, () => Speech.say(pick(PRAISE)));
       }
+    }
+    // one more success at the current stage → returns that stage's new count
+    function addLevel() {
+      const cur = (levels[stageKey] || [0, 0, 0]).slice();
+      cur[stage - 1] = (cur[stage - 1] || 0) + 1;
+      const next = { ...levels, [stageKey]: cur };
+      setLevels(next);
+      Profiles.saveLevels(profileId, next);
+      return cur[stage - 1];
+    }
+    // 3rd success at a stage: medal! then move on to the next stage (or suggest the next letter)
+    function earnMedal() {
+      burst(true);
+      Sfx.clap();
+      setToast(`${MEDALS[stage - 1]} ${['동메달', '은메달', '금메달'][stage - 1]}!`);
+      later(700, () => Speech.say(SAY.medal[stage - 1] + ' | ' + (stage < 3 ? SAY.stageIntro[stage] : SAY.nextLetter)));
+      // keep showing this stage while we celebrate (the saved medal would otherwise switch it at once)
+      setStageSel({ key: stageKey, stage });
+      if (stage < 3) {
+        pendingStage.current = { key: stageKey, stage: stage + 1 };
+        later(3600, goToPendingStage);
+      }
+    }
+    function goToPendingStage() {
+      const p = pendingStage.current;
+      if (!p) return false;
+      pendingStage.current = null;
+      doneRef.current = false;
+      setDone(false);
+      setWordDone(false);
+      setStageSel(p);
+      if (word) setSyl(0);
+      setSession((x) => x + 1);
+      return p.stage;
+    }
+    // child taps a medal button
+    function pickStage(st) {
+      Sfx.pop();
+      if (!stageOpen(st)) { setToast(`🔒 ${MEDALS[st - 2]} 메달을 먼저 받아 볼까요?`); return; }
+      if (st === stage) return;
+      clearTimers();
+      pendingStage.current = null;
+      doneRef.current = false;
+      setDone(false);
+      setWordDone(false);
+      setStageSel({ key: stageKey, stage: st });
+      if (word) setSyl(0);
+      setSession((x) => x + 1);
+      Speech.say(SAY.stageIntro[st - 1]);
     }
 
     // ---- view pieces
@@ -2279,12 +2397,27 @@
         </div>
       </div>`;
 
+    const stageChips = !isPractice && html`
+      <div className="stages" role="group" aria-label="단계">
+        ${[1, 2, 3].map((st) => {
+          const n = Math.min(STAGE_GOAL, lv[st - 1] || 0), open = stageOpen(st), got = n >= STAGE_GOAL;
+          return html`<button key=${st} onClick=${() => pickStage(st)} aria-pressed=${st === stage}
+              aria-label=${`${st}단계 ${STAGE_NAMES[st - 1]}${got ? ', 메달 받음' : `, ${n}번 성공`}${open ? '' : ', 잠김'}`}
+              className=${'stage-chip' + (st === stage ? ' on' : '') + (open ? '' : ' locked')}>
+              <span className="medal" style=${{ filter: got ? 'none' : 'grayscale(1) opacity(.45)' }}>${open ? MEDALS[st - 1] : '🔒'}</span>
+              <span className="dots">${[0, 1, 2].map((i) => html`<i key=${i} className=${i < n ? 'f' : ''}></i>`)}</span>
+              <span className="stage-name">${STAGE_NAMES[st - 1]}</span>
+            </button>`;
+        })}
+      </div>`;
+
     const card = html`
       <div className="card soft">
         <div className="glyph-box">${glyph}</div>
         <div className="card-text">
           <div className="card-label">${label}</div>
           <${BigBtn} onClick=${listen} bg="#fff" fg="#0284C7" border="#BAE6FD" icon="Volume2" className="flex-none">들어 보기<//>
+          ${stageChips}
         </div>
         ${counter}
       </div>`;
@@ -2366,11 +2499,11 @@
 
         ${tabsView}
 
-        <${PickerBar} items=${pickerItems} active=${pickerActive} onPick=${pickItem} progress=${progress} lead=${catPills} />
+        <${PickerBar} items=${pickerItems} active=${pickerActive} onPick=${pickItem} progress=${progress} levels=${isPractice ? {} : levels} lead=${catPills} />
 
         <div className="workspace">
           <section className="info">${card}</section>
-          <${Board} ref=${board} item=${current} session=${session} showGrid=${showGuide} showGuide=${showGuide}
+          <${Board} ref=${board} item=${current} session=${session} showGrid=${showGrid} showGuide=${showGuide} faint=${faint}
                     color=${color} locked=${done} onSuccess=${onSuccess} penOnly=${penOnly} onPen=${onPen}
                     rail=${crayonsInRow ? null : crayons} railRem=${crayonsInRow ? 0 : 4.875}>
             ${stamp > 0 && html`
@@ -2467,7 +2600,7 @@
             </section>
 
             <section>
-              <h3 className="text-[1.375rem] mb-2">⭐ 별 기록 지우기</h3>
+              <h3 className="text-[1.375rem] mb-2">⭐ 별·메달 기록 지우기</h3>
               ${profiles.length > 1 && html`<div className="flex gap-2 mb-3 flex-wrap">
                 ${profiles.map((p) => html`<button key=${p.id} onClick=${() => { Sfx.pop(); setResetFor(p.id); }}
                     className="h-[3.25rem] px-3 rounded-2xl border-4 text-[1.1875rem] flex items-center gap-1"
