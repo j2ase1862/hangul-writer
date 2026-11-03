@@ -301,7 +301,18 @@
     }
     // Must be called synchronously inside a tap handler at least once on iOS to unlock speech.
     // Slightly slow and only a touch brighter: a big pitch shift / very slow rate is what makes TTS sound robotic.
-    function say(text, { rate, pitch = 1.05, queue = false, voiceURI } = {}) {
+    // Prefer the natural AI voice file for this sentence; fall back to the device's TTS voice.
+    // (voiceURI = "preview this device voice" from 설정, so it always uses TTS.)
+    function say(text, opts = {}) {
+      if (muted || !text) return;
+      if (!opts.voiceURI && Clips.play(text, !!opts.queue, () => tts(text, opts))) {
+        if (!opts.queue && synth && (synth.speaking || synth.pending)) synth.cancel();
+        return;
+      }
+      if (!opts.queue) Clips.stop();
+      tts(text, opts);
+    }
+    function tts(text, { rate, pitch = 1.05, queue = false, voiceURI } = {}) {
       if (!synth || muted || !text) return;
       if (!voice) load();
       if (!queue && (synth.speaking || synth.pending)) synth.cancel();
@@ -326,8 +337,11 @@
     };
     return {
       say,
-      stop() { if (synth) synth.cancel(); },
-      setMuted(m) { muted = m; if (m && synth) synth.cancel(); },
+      // iOS only lets a page speak after it has spoken once inside a tap; voice files may handle the
+      // first sentences, so prime the TTS engine silently from the 시작하기 tap.
+      unlock() { if (!synth) return; try { const u = new SpeechSynthesisUtterance(' '); u.volume = 0; synth.speak(u); } catch (e) {} },
+      stop() { if (synth) synth.cancel(); Clips.stop(); },
+      setMuted(m) { muted = m; if (m) { if (synth) synth.cancel(); Clips.stop(); } },
       setPreferred(uri) { preferredURI = uri || null; load(); },
       setRate(r) { baseRate = r; },
       currentURI() { if (!voice) load(); return voice ? idOf(voice) : null; },
@@ -371,6 +385,7 @@
     }
     return {
       setMuted(m) { muted = m; },
+      context: () => ac(),
       unlock() {
         const c = ac(); if (!c) return;
         const b = c.createBuffer(1, 1, 22050);
@@ -421,6 +436,81 @@
     };
   })();
 
+  // ---------------------------------------------------------------------------
+  // AI voice files: audio/manifest.json + audio/<phraseId>.mp3 (made by tools/make-voices.mjs).
+  // Played through Web Audio (already unlocked by the 시작하기 tap on iOS). Missing → TTS fallback.
+  // ---------------------------------------------------------------------------
+  const Clips = (() => {
+    const BASE = 'audio/';
+    let manifest = null;
+    let enabled = true;
+    const cache = new Map(); // id -> Promise<AudioBuffer>
+    let src = null;          // the clip playing right now
+    let token = 0;           // bumps on stop() so queued/late clips don't start
+    let chain = Promise.resolve();
+
+    if (typeof fetch === 'function') fetch(BASE + 'manifest.json', { cache: 'no-cache' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((m) => { if (m && m.clips) { manifest = m; if (wantPreload) preloadAll(); } })
+      .catch(() => {});
+    let wantPreload = false;
+
+    const idFor = (text) => {
+      if (!manifest || !enabled) return null;
+      const id = phraseId(text);
+      return manifest.clips[id] ? id : null;
+    };
+    function load(id) {
+      if (cache.has(id)) return cache.get(id);
+      const c = Sfx.context();
+      if (!c) return Promise.reject(new Error('no audio'));
+      const p = fetch(BASE + id + '.mp3')
+        .then((r) => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.arrayBuffer(); })
+        .then((buf) => new Promise((res, rej) => c.decodeAudioData(buf, res, rej))); // callback form for older Safari
+      p.catch(() => cache.delete(id));
+      cache.set(id, p);
+      return p;
+    }
+    function stop() {
+      token++;
+      if (src) { try { src.stop(); } catch (e) {} src = null; }
+      chain = Promise.resolve();
+    }
+    // Returns true if a voice file will say this sentence (fallback() runs if the file can't be played).
+    function play(text, queue, fallback) {
+      const id = idFor(text);
+      const c = id && Sfx.context();
+      if (!c) return false;
+      if (!queue) stop();
+      const my = token;
+      const buf = load(id);
+      chain = chain.then(() => buf).then((b) => new Promise((done) => {
+        if (my !== token) return done();
+        const s = c.createBufferSource();
+        s.buffer = b;
+        s.connect(c.destination);
+        s.onended = () => { if (src === s) src = null; done(); };
+        src = s;
+        s.start();
+      })).catch(() => { if (my === token && fallback) fallback(); });
+      return true;
+    }
+    // Decode everything quietly in the background so later sentences start instantly.
+    function preloadAll() {
+      if (!manifest) { wantPreload = true; return; }
+      const ids = Object.keys(manifest.clips);
+      let i = 0;
+      const nextOne = () => { if (i < ids.length) load(ids[i++]).catch(() => {}).then(() => setTimeout(nextOne, 25)); };
+      nextOne();
+    }
+    return {
+      play, stop, preloadAll,
+      setEnabled(v) { enabled = v; if (!v) stop(); },
+      info: () => (manifest ? { voice: manifest.voice, count: Object.keys(manifest.clips).length } : null),
+    };
+  })();
+
+  /* @@VOICE-DATA-START — pure data (no DOM). tools/make-voices.mjs evaluates this block to list every sentence. */
   // ---------------------------------------------------------------------------
   // Geometry helpers (all stroke data lives in a 0..1 unit square)
   // ---------------------------------------------------------------------------
@@ -627,6 +717,36 @@
   const NUM_KO = ['하나', '둘', '셋', '넷', '다섯', '여섯', '일곱', '여덟', '아홉', '열'];
   // Spoken praise: plain words only — sound-effect words (반짝반짝, 짝짝짝) are played as real sounds instead.
   const PRAISE = ['참 잘했어요!', '우와, 멋지다!', '정말 예쁘게 썼네!', '최고야!'];
+
+  // Every sentence the app says is built here, so the AI-voice generator can make a file for each one.
+  const SAY = {
+    welcome: '몽글몽글 한글 쓰기! 우리 같이 써 볼까?',
+    retry: '다시 써볼까?',
+    inkFirst: '먼저 따라서 써 볼까?',
+    almost: '조금만 더! 선을 따라서 써 볼까?',
+    wordIntro: (w, s) => `${w.word}! ${s.speak}`,
+    wordDone: (w) => `${w.word}! 다 썼어요!`,
+    milestone: (n) => `우와! 벌써 ${n}번이나 썼어요!`,
+  };
+  const MILESTONE_MAX = 100; // voice files exist for 5, 10, … 100 repetitions
+  function buildPhrases() {
+    const out = new Set([SAY.welcome, SAY.retry, SAY.inkFirst, SAY.almost, ...PRAISE, ...NUM_KO]);
+    [...ITEMS.lines, ...ITEMS.consonants, ...ITEMS.vowels].forEach((it) => out.add(it.speak));
+    ITEMS.words.forEach((w) => {
+      out.add(SAY.wordIntro(w, w.syllables[0]));
+      out.add(SAY.wordDone(w));
+      w.syllables.forEach((s) => out.add(s.speak));
+    });
+    for (let n = 5; n <= MILESTONE_MAX; n += 5) out.add(SAY.milestone(n));
+    return [...out];
+  }
+  // Stable file name for a sentence (FNV-1a 32-bit hex). The generator runs this exact code too.
+  function phraseId(text) {
+    let h = 0x811c9dc5;
+    for (let i = 0; i < text.length; i++) { h ^= text.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
+    return ('0000000' + h.toString(16)).slice(-8);
+  }
+  /* @@VOICE-DATA-END */
 
   // ---------------------------------------------------------------------------
   // Handwriting check: does the child's ink follow the guide strokes?
@@ -1200,7 +1320,7 @@
     const [stamp, setStamp] = useState(0);
     const [muted, setMuted] = useState(() => store.get('monggeul.muted', false));
     // Parent settings: voice (null = automatic), speaking rate, Pencil-only mode ('auto' | 'on' | 'off')
-    const [prefs, setPrefs] = useState(() => ({ voice: null, rate: 0.85, pen: 'auto', ...store.get('monggeul.prefs', {}) }));
+    const [prefs, setPrefs] = useState(() => ({ voice: null, rate: 0.85, pen: 'auto', clips: true, ...store.get('monggeul.prefs', {}) }));
     const [penSeen, setPenSeen] = useState(false);
     const [settingsOpen, setSettingsOpen] = useState(false);
     const [toast, setToast] = useState(null);
@@ -1210,7 +1330,7 @@
     const penSeenRef = useRef(false);
 
     useEffect(() => { Speech.setMuted(muted); Sfx.setMuted(muted); store.set('monggeul.muted', muted); }, [muted]);
-    useEffect(() => { Speech.setPreferred(prefs.voice); Speech.setRate(prefs.rate); store.set('monggeul.prefs', prefs); }, [prefs]);
+    useEffect(() => { Speech.setPreferred(prefs.voice); Speech.setRate(prefs.rate); Clips.setEnabled(prefs.clips !== false); store.set('monggeul.prefs', prefs); }, [prefs]);
     useEffect(() => { if (!toast) return; const t = setTimeout(() => setToast(null), 3500); return () => clearTimeout(t); }, [toast]);
 
     const penOnly = prefs.pen === 'on' || (prefs.pen === 'auto' && penSeen);
@@ -1251,7 +1371,7 @@
     // Speak the new item's prompt after every navigation
     useEffect(() => {
       if (!started || !navId) return;
-      if (word && syl === 0) Speech.say(`${word.word}! ${current.speak}`);
+      if (word && syl === 0) Speech.say(SAY.wordIntro(word, current));
       else Speech.say(current.speak);
     }, [navId]);
 
@@ -1259,7 +1379,9 @@
     function start() {
       Sfx.unlock();
       Sfx.pop();
-      Speech.say('몽글몽글 한글 쓰기! 우리 같이 써 볼까?');
+      Speech.unlock();
+      Speech.say(SAY.welcome);
+      Clips.preloadAll();
       setStarted(true);
     }
     function selectTab(id) {
@@ -1301,14 +1423,14 @@
       clearTimers();
       if (board.current) board.current.clear(true);
       Sfx.clear();
-      Speech.say('다시 써볼까?');
+      Speech.say(SAY.retry);
       doneRef.current = false;
       setDone(false);
       setWordDone(false);
     }
     function listen() {
       Sfx.pop();
-      if (word && syl === 0) Speech.say(`${word.word}! ${current.speak}`);
+      if (word && syl === 0) Speech.say(SAY.wordIntro(word, current));
       else Speech.say(current.speak);
     }
     function demo() {
@@ -1318,9 +1440,9 @@
     function check() {
       Sfx.pop();
       if (doneRef.current || !board.current) return;
-      if (!board.current.hasInk()) { Speech.say('먼저 따라서 써 볼까?'); return; }
+      if (!board.current.hasInk()) { Speech.say(SAY.inkFirst); return; }
       if (board.current.check().pass) onSuccess();
-      else Speech.say('조금만 더! 선을 따라서 써 볼까?');
+      else Speech.say(SAY.almost);
     }
     function toggleGrid() {
       Sfx.pop();
@@ -1349,7 +1471,7 @@
         burst(milestone);
         if (milestone) {
           Sfx.clap();
-          later(700, () => Speech.say(`우와! 벌써 ${n}번이나 썼어요!`));
+          later(700, () => Speech.say(SAY.milestone(n)));
         }
         later(milestone ? 3200 : 1800, () => {
           if (board.current) board.current.clear(true);
@@ -1366,7 +1488,7 @@
           bump(word.key);
           setWordDone(true);
           Sfx.clap();
-          later(700, () => Speech.say(`${word.word}! 다 썼어요!`));
+          later(700, () => Speech.say(SAY.wordDone(word)));
         }
       } else {
         burst(false);
@@ -1552,6 +1674,7 @@
     const set = (patch) => { Sfx.pop(); setPrefs((p) => ({ ...p, ...patch })); };
     const sample = (uri) => Speech.say('안녕! 나랑 같이 한글 써 볼까? 기역! 기차의, 기!', { voiceURI: uri, queue: false });
     const hasPremium = voices.some((v) => v.quality === '프리미엄' || v.quality === '향상됨');
+    const clipInfo = Clips.info();
 
     const Seg = ({ value, options, onPick }) => html`
       <div className="grid gap-2" style=${{ gridTemplateColumns: `repeat(${options.length}, 1fr)` }}>
@@ -1573,7 +1696,18 @@
 
           <div className="scroll-y px-6 pb-6 flex flex-col gap-6">
             <section>
-              <h3 className="text-[22px] mb-2">🗣️ 목소리</h3>
+              <h3 className="text-[22px] mb-2">🎙️ AI 음성 파일</h3>
+              ${clipInfo
+                ? html`<${Frag}>
+                    <${Seg} value=${prefs.clips !== false} onPick=${(v) => set({ clips: v })}
+                            options=${[[true, 'AI 음성 사용'], [false, '기기 음성 사용']]} />
+                    <p className="text-[16px] text-slate-500 mt-2">${clipInfo.count}개 문장 · 목소리 ${clipInfo.voice}. 파일이 없는 문장만 아래 기기 음성으로 말해요.</p>
+                  <//>`
+                : html`<p className="text-[17px] text-slate-500">아직 AI 음성 파일이 없어서 아래 기기 음성으로 말해요.</p>`}
+            </section>
+
+            <section>
+              <h3 className="text-[22px] mb-2">🗣️ 기기 음성 <span className="text-[16px] text-slate-400">(AI 음성 파일이 없을 때)</span></h3>
               ${!Speech.supported && html`<p className="text-[18px] text-red-500">이 브라우저는 음성 기능을 지원하지 않아요.</p>`}
               <div className="flex flex-col gap-2">
                 <button onClick=${() => set({ voice: null })}
@@ -1611,7 +1745,7 @@
 
             <section>
               <h3 className="text-[22px] mb-2">🐢 말 빠르기</h3>
-              <${Seg} value=${prefs.rate} onPick=${(r) => { set({ rate: r }); Speech.say('이 빠르기로 말해요.', { rate: r }); }}
+              <${Seg} value=${prefs.rate} onPick=${(r) => { set({ rate: r }); Speech.say('이 빠르기로 말해요.', { rate: r, voiceURI: Speech.currentURI() }); }}
                       options=${[[0.7, '천천히'], [0.85, '보통'], [1.0, '조금 빠르게']]} />
             </section>
 

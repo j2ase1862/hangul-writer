@@ -1,0 +1,2 @@
+# Voice samples made by `node tools/make-voices.mjs samples` (for choosing a voice; not used by the app)
+audio-samples/
