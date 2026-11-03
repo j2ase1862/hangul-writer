@@ -785,7 +785,9 @@
     };
   }
   function syllableItem(ch, word, emoji) {
-    return { key: 's:' + ch, kind: 'syllable', glyph: ch, name: ch, emoji, word, strokes: syllableStrokes(ch), speak: `${word}의 | ${ch}!` };
+    // "우유의 | 우!" — but a one-letter word just says itself ("소!", not "소의 소").
+    const speak = word.length > 1 ? `${word}의 | ${ch}!` : `${ch}!`;
+    return { key: 's:' + ch, kind: 'syllable', glyph: ch, name: ch, emoji, word, strokes: syllableStrokes(ch), speak };
   }
   const wordItem = ([w, e]) => ({ key: 'w:' + w, kind: 'word', word: w, emoji: e, syllables: [...w].map((ch) => syllableItem(ch, w, e)) });
   WORD_THEMES.forEach((t) => { t.items = t.words.map(wordItem); });
@@ -796,9 +798,13 @@
     vowels: VOWELS.map(jamoItem),
     words: [].concat(...WORD_THEMES.map((t) => t.items)),
   };
+  // 무한 반복 "글자": each letter once. Prefer a longer word as its example ("소방차의 소" over "소의 소").
   const SYLLABLES = (() => {
-    const seen = new Set(), out = [];
-    ITEMS.words.forEach((w) => w.syllables.forEach((s) => { if (!seen.has(s.key)) { seen.add(s.key); out.push(s); } }));
+    const at = new Map(), out = [];
+    ITEMS.words.forEach((w) => w.syllables.forEach((s) => {
+      if (!at.has(s.key)) { at.set(s.key, out.length); out.push(s); }
+      else if (out[at.get(s.key)].word.length === 1 && w.word.length > 1) out[at.get(s.key)] = s;
+    }));
     return out;
   })();
   const PCATS = [
@@ -829,7 +835,8 @@
     retry: '다시 써볼까?',
     inkFirst: '먼저 따라서 써 볼까?',
     almost: '조금만 더! 선을 따라서 써 볼까?',
-    wordIntro: (w, s) => `${w.word}! | ${s.speak}`,
+    // "우유! | 우유의 | 우!"  ·  one-letter words: "소! | 같이 써 볼까?"
+    wordIntro: (w, s) => (w.syllables.length > 1 ? `${w.word}! | ${s.speak}` : `${w.word}! | 같이 써 볼까?`),
     wordDone: (w) => `${w.word}! 다 썼어요!`,
     milestone: (n) => `우와! 벌써 ${n}번이나 썼어요!`,
   };
