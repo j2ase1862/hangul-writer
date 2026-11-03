@@ -5,6 +5,7 @@ const path = require('path');
 const suites = [
   ['판정 시험 (따라 쓰기 인식)', 'recognition.test.cjs'],
   ['앱 동작 시험', 'app.test.cjs'],
+  ['오프라인 시험 (서비스 워커)', 'sw.test.cjs'],
 ];
 let failed = 0;
 for (const [name, file] of suites) {

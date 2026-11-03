@@ -7,14 +7,17 @@
 //   VOICE audio/*.mp3 (AI voice files)         → cache first; flushed when audio/manifest.json
 //                                                 says the voice files were regenerated
 // Bump VERSION when this file's logic changes.
-const VERSION = 'v2';
+// v3: the app page is stored under ONE name (index.html). v2 also kept a "/" copy from install time
+// that was never refreshed, so offline the app could open an old version (e.g. without 영어).
+const VERSION = 'v3';
 const APP = 'monggeul-app-' + VERSION;
 const LIBS = 'monggeul-libs-v1';
 const VOICE = 'monggeul-voice-v1';
 const META = 'monggeul-meta-v1'; // remembers which voice-file generation is cached
 
+const APP_PAGE = './index.html'; // the one cached copy of the app page ("/" and "/index.html" both use it)
 const CORE = [
-  './', './index.html', './manifest.webmanifest', './audio/manifest.json',
+  APP_PAGE, './manifest.webmanifest', './audio/manifest.json',
   './icons/icon-192.png', './icons/icon-512.png', './icons/icon-maskable-512.png', './icons/apple-touch-icon.png',
 ];
 const LIB_URLS = [
@@ -92,8 +95,11 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(req.url);
 
   if (url.origin === self.location.origin) {
-    if (req.mode === 'navigate' || url.pathname.endsWith('/index.html')) {
-      event.respondWith(networkFirst(req, APP, './index.html'));
+    const root = new URL(self.registration.scope).pathname; // e.g. /hangul-writer/
+    if (url.pathname === root || url.pathname === root + 'index.html') {
+      event.respondWith(appPage(req)); // the app itself
+    } else if (req.mode === 'navigate') {
+      event.respondWith(networkFirst(req, APP)); // other pages on the site (e.g. tests/) — never stored as the app
     } else if (url.pathname.endsWith('/audio/manifest.json')) {
       event.respondWith(voiceManifest(event));
     } else if (/\/audio\/[0-9a-f]{8}\.mp3$/.test(url.pathname)) {
@@ -115,14 +121,27 @@ async function cacheFirst(req, name) {
   return res;
 }
 
-async function networkFirst(req, name, fallbackUrl) {
+async function networkFirst(req, name) {
   const cache = await caches.open(name);
   try {
     const res = await withTimeout(fetch(req), 4000);
-    if (res.ok) cache.put(fallbackUrl || req, res.clone());
+    if (res.ok) cache.put(req, res.clone());
     return res;
   } catch (e) {
-    return (await cache.match(req, { ignoreSearch: true })) || (fallbackUrl && (await cache.match(fallbackUrl))) || Response.error();
+    return (await cache.match(req, { ignoreSearch: true })) || Response.error();
+  }
+}
+
+// The app page: newest from the network when online (and saved), otherwise the saved copy.
+// Always saved and read under the single name APP_PAGE, so "/" can never serve an older copy.
+async function appPage(req) {
+  const cache = await caches.open(APP);
+  try {
+    const res = await withTimeout(fetch(req), 4000);
+    if (res.ok) await cache.put(APP_PAGE, res.clone());
+    return res;
+  } catch (e) {
+    return (await cache.match(APP_PAGE)) || Response.error();
   }
 }
 
