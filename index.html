@@ -56,6 +56,14 @@
   .scroll-y button { touch-action: pan-y; }
   .scroll-y { overflow-y: auto; touch-action: pan-y; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
 
+  /* Big, finger/Pencil-friendly slider (말 빠르기) */
+  .big-range { -webkit-appearance: none; appearance: none; height: 48px; background: transparent; touch-action: none; }
+  .big-range::-webkit-slider-runnable-track { height: 14px; border-radius: 7px; background: linear-gradient(90deg, #BAE6FD, #FDBA74); }
+  .big-range::-webkit-slider-thumb { -webkit-appearance: none; width: 40px; height: 40px; margin-top: -13px; border-radius: 50%;
+    background: #FB923C; border: 5px solid #fff; box-shadow: 0 3px 8px rgba(0,0,0,.25); }
+  .big-range::-moz-range-track { height: 14px; border-radius: 7px; background: linear-gradient(90deg, #BAE6FD, #FDBA74); }
+  .big-range::-moz-range-thumb { width: 30px; height: 30px; border-radius: 50%; background: #FB923C; border: 5px solid #fff; }
+
   /* Drawing surface: no scrolling, zooming, or system gestures */
   .pad, .pad canvas { touch-action: none; -ms-touch-action: none; }
   .pad canvas { position: absolute; left: 0; top: 0; display: block; }
@@ -288,7 +296,7 @@
       return s;
     }
     let preferredURI = null;   // chosen in 설정; null = pick the best automatically
-    let baseRate = 0.85;
+    let baseRate = 0.9;
     let onVoicesCb = null;
     const koVoices = () => (synth ? synth.getVoices().filter((v) => /^ko([-_]|$)/i.test(v.lang || '')) : [])
       .sort((a, b) => score(b) - score(a));
@@ -444,81 +452,142 @@
 
   // ---------------------------------------------------------------------------
   // AI voice files: audio/manifest.json + audio/<phraseId>.mp3 (made by tools/make-voices.mjs).
-  // Played through Web Audio (already unlocked by the 시작하기 tap on iOS). Missing → TTS fallback.
+  // Played with ONE reused <audio> element so the 말 빠르기 slider can change the speed without
+  // changing the pitch (Safari keeps the pitch when playbackRate changes). If the browser ever
+  // refuses that element, clips play through Web Audio at their recorded speed instead.
+  // A missing/broken file → the sentence is spoken by the device voice (TTS).
   // ---------------------------------------------------------------------------
   const Clips = (() => {
     const BASE = 'audio/';
+    const PART_GAP_MS = 150;   // pause between parts: "우유의" … "우!"
     let manifest = null;
     let enabled = true;
-    const cache = new Map(); // id -> Promise<AudioBuffer>
-    let src = null;          // the clip playing right now
-    let token = 0;           // bumps on stop() so queued/late clips don't start
+    let speed = 0.9;           // wanted speaking speed (1.0 = Google's normal speed)
+    let wantPreload = false;
+    const files = new Map();   // id -> Promise<ArrayBuffer>
+    const urls = new Map();    // id -> Promise<blob: URL>   (for the <audio> element)
+    const bufs = new Map();    // id -> Promise<AudioBuffer> (Web Audio fallback)
+    const el = typeof Audio === 'function' ? new Audio() : null;
+    if (el) { el.preload = 'auto'; el.preservesPitch = true; el.webkitPreservesPitch = true; el.mozPreservesPitch = true; }
+    let elementOk = !!el;
+    let src = null;            // Web Audio source playing right now
+    let token = 0;             // bumps on stop() so queued/late parts don't start
     let chain = Promise.resolve();
 
     if (typeof fetch === 'function') fetch(BASE + 'manifest.json', { cache: 'no-cache' })
       .then((r) => (r.ok ? r.json() : null))
       .then((m) => { if (m && m.clips) { manifest = m; if (wantPreload) preloadAll(); } })
       .catch(() => {});
-    let wantPreload = false;
 
     const idFor = (text) => {
       if (!manifest || !enabled) return null;
       const id = phraseId(text);
       return manifest.clips[id] ? id : null;
     };
-    function load(id) {
-      if (cache.has(id)) return cache.get(id);
-      const c = Sfx.context();
-      if (!c) return Promise.reject(new Error('no audio'));
-      const p = fetch(BASE + id + '.mp3')
-        .then((r) => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.arrayBuffer(); })
-        .then((buf) => new Promise((res, rej) => c.decodeAudioData(buf, res, rej))); // callback form for older Safari
-      p.catch(() => cache.delete(id));
-      cache.set(id, p);
+    const memo = (map, id, make) => {
+      if (map.has(id)) return map.get(id);
+      const p = make();
+      p.catch(() => map.delete(id));
+      map.set(id, p);
       return p;
+    };
+    const file = (id) => memo(files, id, () => fetch(BASE + id + '.mp3')
+      .then((r) => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.arrayBuffer(); }));
+    const url = (id) => memo(urls, id, () => file(id).then((ab) => URL.createObjectURL(new Blob([ab], { type: 'audio/mpeg' }))));
+    const buffer = (id) => memo(bufs, id, () => file(id).then((ab) => {
+      const c = Sfx.context();
+      if (!c) throw new Error('no audio');
+      return new Promise((res, rej) => c.decodeAudioData(ab.slice(0), res, rej)); // callback form for older Safari
+    }));
+    // clips were recorded at manifest.rate, so play them back at speed / recordedRate
+    const factor = () => Math.min(2, Math.max(0.5, speed / ((manifest && manifest.rate) || 1)));
+
+    function playElement(u, my) {
+      return new Promise((resolve, reject) => {
+        const clear = () => { el.onended = el.onpause = el.onerror = null; };
+        el.onended = () => { clear(); resolve(); };
+        el.onpause = () => { if (my !== token) { clear(); resolve(); } }; // stop() pauses it
+        el.onerror = () => { clear(); reject(new Error('media error')); };
+        el.src = u;
+        el.defaultPlaybackRate = factor(); // setting src resets playbackRate to this
+        el.playbackRate = factor();
+        const p = el.play();
+        if (p && p.catch) p.catch((e) => { clear(); reject(e); });
+      });
+    }
+    function playBuffer(id, my) {
+      return buffer(id).then((b) => new Promise((done) => {
+        if (my !== token) return done();
+        const c = Sfx.context();
+        if (!c) return done();
+        const s = c.createBufferSource();
+        s.buffer = b;
+        s.connect(c.destination);
+        s.onended = () => { if (src === s) src = null; done(); };
+        src = s;
+        s.start();
+      }));
+    }
+    function playPart(id, my) {
+      if (!elementOk) return playBuffer(id, my);
+      return url(id)
+        .then((u) => (my === token ? playElement(u, my) : null))
+        .catch((e) => {
+          if (my !== token) return null;
+          // The page may not use <audio> (autoplay policy) → keep the AI voice via Web Audio.
+          if (e && (e.name === 'NotAllowedError' || e.name === 'NotSupportedError')) { elementOk = false; return playBuffer(id, my); }
+          throw e;
+        });
     }
     function stop() {
       token++;
+      if (el && !el.paused) { try { el.pause(); } catch (e) {} }
       if (src) { try { src.stop(); } catch (e) {} src = null; }
       chain = Promise.resolve();
     }
-    const PART_GAP_MS = 320; // pause between "우유의" and "우!"
     // Returns true if voice files will say this sentence (fallback() runs if a file can't be played).
     // A sentence may have several "|" parts; every part needs its own file, played with a short pause.
     function play(text, queue, fallback) {
       const ids = splitParts(text).map(idFor);
       if (!ids.length || ids.some((id) => !id)) return false;
-      const c = Sfx.context();
-      if (!c) return false;
       if (!queue) stop();
       const my = token;
-      const bufs = ids.map(load);
-      bufs.forEach((buf, k) => {
-        chain = chain.then(() => buf).then((b) => new Promise((done) => {
-          if (my !== token) return done();
-          const s = c.createBufferSource();
-          s.buffer = b;
-          s.connect(c.destination);
-          s.onended = () => { if (src === s) src = null; setTimeout(done, k < bufs.length - 1 ? PART_GAP_MS : 0); };
-          src = s;
-          s.start();
-        }));
+      ids.forEach((id) => file(id).catch(() => {})); // start downloading every part right away
+      ids.forEach((id, k) => {
+        chain = chain.then(() => (my === token ? playPart(id, my) : null))
+          .then(() => (my === token && k < ids.length - 1 ? sleep(PART_GAP_MS) : null));
       });
       chain = chain.catch(() => { if (my === token && fallback) fallback(); });
       return true;
     }
-    // Decode everything quietly in the background so later sentences start instantly.
+    // iOS: an <audio> element may only play by itself after it has played once inside a tap.
+    function unlock() {
+      if (!el) return;
+      try { unlockEl(); } catch (e) { elementOk = false; } // never let this break the 시작하기 tap
+    }
+    function unlockEl() {
+      const n = 2205, ab = new ArrayBuffer(44 + n * 2), v = new DataView(ab); // 0.1s of silence (WAV)
+      const w = (o, s) => [...s].forEach((ch, i) => v.setUint8(o + i, ch.charCodeAt(0)));
+      w(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true); w(8, 'WAVE'); w(12, 'fmt '); v.setUint32(16, 16, true);
+      v.setUint16(20, 1, true); v.setUint16(22, 1, true); v.setUint32(24, 22050, true); v.setUint32(28, 44100, true);
+      v.setUint16(32, 2, true); v.setUint16(34, 16, true); w(36, 'data'); v.setUint32(40, n * 2, true);
+      el.src = URL.createObjectURL(new Blob([ab], { type: 'audio/wav' }));
+      const p = el.play();
+      if (p && p.catch) p.catch((e) => { if (e && e.name === 'NotAllowedError') elementOk = false; });
+    }
+    // Fetch everything quietly in the background so later sentences start instantly.
     function preloadAll() {
       if (!manifest) { wantPreload = true; return; }
       const ids = Object.keys(manifest.clips);
       let i = 0;
-      const nextOne = () => { if (i < ids.length) load(ids[i++]).catch(() => {}).then(() => setTimeout(nextOne, 25)); };
+      const nextOne = () => { if (i < ids.length) url(ids[i++]).catch(() => {}).then(() => setTimeout(nextOne, 15)); };
       nextOne();
     }
     return {
-      play, stop, preloadAll,
+      play, stop, preloadAll, unlock,
+      setSpeed(r) { speed = r; if (el && !el.paused) el.playbackRate = factor(); },
       setEnabled(v) { enabled = v; if (!v) stop(); },
-      info: () => (manifest ? { voice: manifest.voice, count: Object.keys(manifest.clips).length } : null),
+      info: () => (manifest ? { voice: manifest.voice, count: Object.keys(manifest.clips).length, rate: manifest.rate } : null),
     };
   })();
 
@@ -1361,7 +1430,7 @@
     const [stamp, setStamp] = useState(0);
     const [muted, setMuted] = useState(() => store.get('monggeul.muted', false));
     // Parent settings: voice (null = automatic), speaking rate, Pencil-only mode ('auto' | 'on' | 'off')
-    const [prefs, setPrefs] = useState(() => ({ voice: null, rate: 0.85, pen: 'auto', clips: true, ...store.get('monggeul.prefs', {}) }));
+    const [prefs, setPrefs] = useState(() => { const p = { voice: null, rate: 0.9, pen: 'auto', clips: true, ...store.get('monggeul.prefs', {}) }; p.rate = Math.min(1, Math.max(0.5, Number(p.rate) || 0.9)); return p; });
     const [penSeen, setPenSeen] = useState(false);
     const [settingsOpen, setSettingsOpen] = useState(false);
     const [toast, setToast] = useState(null);
@@ -1371,7 +1440,7 @@
     const penSeenRef = useRef(false);
 
     useEffect(() => { Speech.setMuted(muted); Sfx.setMuted(muted); store.set('monggeul.muted', muted); }, [muted]);
-    useEffect(() => { Speech.setPreferred(prefs.voice); Speech.setRate(prefs.rate); Clips.setEnabled(prefs.clips !== false); store.set('monggeul.prefs', prefs); }, [prefs]);
+    useEffect(() => { Speech.setPreferred(prefs.voice); Speech.setRate(prefs.rate); Clips.setSpeed(prefs.rate); Clips.setEnabled(prefs.clips !== false); store.set('monggeul.prefs', prefs); }, [prefs]);
     useEffect(() => { if (!toast) return; const t = setTimeout(() => setToast(null), 3500); return () => clearTimeout(t); }, [toast]);
 
     const penOnly = prefs.pen === 'on' || (prefs.pen === 'auto' && penSeen);
@@ -1422,6 +1491,7 @@
       Sfx.unlock();
       Sfx.pop();
       Speech.unlock();
+      Clips.unlock();
       Speech.say(SAY.welcome);
       Clips.preloadAll();
       setStarted(true);
@@ -1803,9 +1873,23 @@
             </section>
 
             <section>
-              <h3 className="text-[22px] mb-2">🐢 말 빠르기</h3>
-              <${Seg} value=${prefs.rate} onPick=${(r) => { set({ rate: r }); Speech.say('이 빠르기로 말해요.', { rate: r, voiceURI: Speech.currentURI() }); }}
-                      options=${[[0.7, '천천히'], [0.85, '보통'], [1.0, '조금 빠르게']]} />
+              <div className="flex items-baseline gap-3 mb-1">
+                <h3 className="text-[22px] flex-1">🐢 말 빠르기</h3>
+                <span className="text-[30px] text-orange-500 tabular-nums">${prefs.rate.toFixed(2)}</span>
+              </div>
+              <div className="flex items-center gap-3">
+                <span className="text-[30px]" aria-hidden="true">🐢</span>
+                <input type="range" className="big-range flex-1" min="0.5" max="1" step="0.05" value=${prefs.rate}
+                       aria-label="말 빠르기" aria-valuetext=${prefs.rate.toFixed(2)}
+                       onChange=${(e) => { const r = Number(e.target.value); Speech.setRate(r); Clips.setSpeed(r); setPrefs((p) => ({ ...p, rate: r })); }}
+                       onPointerUp=${() => Speech.say(ITEMS.consonants[0].speak)}
+                       onKeyUp=${() => Speech.say(ITEMS.consonants[0].speak)} />
+                <span className="text-[30px]" aria-hidden="true">🐇</span>
+              </div>
+              <div className="flex justify-between text-[15px] text-slate-400 px-12">
+                <span>0.5 아주 천천히</span><span>0.75</span><span>1.0 보통 빠르기</span>
+              </div>
+              <p className="text-[16px] text-slate-500 mt-1">손을 떼면 그 빠르기로 들려줘요. AI 음성은 목소리 높이는 그대로, 빠르기만 바뀌어요.</p>
             </section>
 
             <section>
