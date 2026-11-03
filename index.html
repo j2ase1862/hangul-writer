@@ -990,6 +990,10 @@
     retry: '다시 써볼까?',
     inkFirst: '먼저 따라서 써 볼까?',
     almost: '조금만 더! 선을 따라서 써 볼까?',
+    // why 다 했어요 didn't pass (see evaluate → reason)
+    stray: '선 밖에 그은 곳이 있어요. 다시 써 볼까?',
+    missing: '아직 안 쓴 획이 있어요. 마저 써 볼까?',
+    joined: '획을 하나씩 나눠서 써 볼까?',
     // "우유! | 우유의 | 우!"  ·  one-letter words: "소! | 같이 써 볼까?"
     wordIntro: (w, s) => (w.syllables.length > 1 ? `${w.word}! | ${s.speak}` : `${w.word}! | 같이 써 볼까?`),
     wordDone: (w) => `${w.word}! 다 썼어요!`,
@@ -997,7 +1001,7 @@
   };
   const MILESTONE_MAX = 100; // voice files exist for 5, 10, … 100 repetitions
   function buildPhrases() {
-    const out = new Set([SAY.retry, SAY.inkFirst, SAY.almost, ...PRAISE, ...NUM_KO, ...SUBJECTS.map((x) => x.intro)]);
+    const out = new Set([SAY.retry, SAY.inkFirst, SAY.almost, SAY.stray, SAY.missing, SAY.joined, ...PRAISE, ...NUM_KO, ...SUBJECTS.map((x) => x.intro)]);
     [...ITEMS.lines, ...ITEMS.consonants, ...ITEMS.vowels, ...ITEMS.numbers].forEach((it) => out.add(it.speak));
     ITEMS.words.forEach((w) => {
       out.add(SAY.wordIntro(w, w.syllables[0]));
@@ -1020,50 +1024,83 @@
   /* @@VOICE-DATA-END */
 
   // ---------------------------------------------------------------------------
-  // Handwriting check: does the child's ink follow the guide strokes?
+  // Handwriting check — judged STROKE BY STROKE:
+  //   • every stroke the child drew must lie mostly on the guide        → otherwise reason 'stray'
+  //   • every guide stroke needs its OWN drawn stroke: one drawn line
+  //     can't count for two guide strokes                               → 'missing' (or 'joined' if the
+  //                                                                        child drew several in one line)
+  //   • a guide stroke drawn in several pieces (pen lifted) still counts; tiny taps are ignored
+  //   • the whole letter must be covered well enough                    → otherwise 'shape'
+  // Returns { pass, reason, coveredIdx } — coveredIdx = guide strokes already done (badges turn ✓).
   // ---------------------------------------------------------------------------
   function evaluate(guide, user, { free = false, lenient = false } = {}) {
-    const fail = { pass: false, coveredIdx: [], coverage: 0 };
-    if (!user.length || !guide.length) return fail;
-    let up = [];
-    user.forEach((s) => { up = up.concat(resample(s.pts, 0.008)); });
-    if (up.length < 4) return fail;
-    const gs = guide.map((s) => resample(s, 0.015));
-    const all = [].concat(...gs);
+    const T = lenient ? { prec: 0.55, own: 0.6, total: 0.65 } : { prec: 0.7, own: 0.75, total: 0.8 };
+    const res = (pass, reason, coveredIdx = []) => ({ pass, reason, coveredIdx });
+    if (!guide.length) return res(false, 'missing');
+    // child's strokes, evenly sampled; drop taps/dots shorter than 2% of the paper
+    let us = user.map((s) => resample(s.pts, 0.008)).filter((p) => p.length > 2 && pathLen(p) >= 0.02);
+    if (!us.length) return res(false, 'missing');
+    const gs = guide.map((s) => resample(s, 0.012));
+    const allG = [].concat(...gs);
 
     if (free) {
-      // Free mode: compare shape only (child can write anywhere, any size)
-      const ub = bbox(up), gb = bbox(all);
+      // 칸 도우미 OFF: the child may write anywhere/any size → compare shapes after fitting to the guide
+      const ub = bbox([].concat(...us)), gb = bbox(allG);
       const uMax = Math.max(ub.w, ub.h), gMax = Math.max(gb.w, gb.h);
-      if (uMax < 0.12) return fail;
+      if (uMax < 0.12) return res(false, 'shape');
       const k = gMax / uMax;
-      up = up.map(([x, y]) => [gb.cx + (x - ub.cx) * k, gb.cy + (y - ub.cy) * k]);
+      us = us.map((p) => p.map(([x, y]) => [gb.cx + (x - ub.cx) * k, gb.cy + (y - ub.cy) * k]));
     }
-    const tc = free ? 0.1 : 0.085, tp = free ? 0.13 : 0.12;
-    const tc2 = tc * tc, tp2 = tp * tp;
-    const near = (p, arr, t2) => {
-      for (let i = 0; i < arr.length; i++) {
-        const dx = p[0] - arr[i][0], dy = p[1] - arr[i][1];
+    const tc = free ? 0.1 : 0.085;  // a guide point counts as traced if ink is this close
+    const tp = free ? 0.13 : 0.12;  // a drawn point counts as "on the guide" if a guide is this close
+    const near = (p, pts, t) => {
+      const t2 = t * t;
+      for (let i = 0; i < pts.length; i++) {
+        const dx = p[0] - pts[i][0], dy = p[1] - pts[i][1];
         if (dx * dx + dy * dy <= t2) return true;
       }
       return false;
     };
-    let hit = 0, tot = 0;
-    const per = gs.map((g) => {
-      let h = 0;
-      for (const p of g) if (near(p, up, tc2)) h++;
-      hit += h; tot += g.length;
-      return h / g.length;
+    const frac = (pts, test) => { let h = 0; for (const p of pts) if (test(p)) h++; return h / pts.length; };
+
+    // how much of each drawn stroke lies on the guide (stray check)
+    const prec = us.map((u) => frac(u, (p) => near(p, allG, tp)));
+    // cov[i][j]: share of guide stroke i traced by drawn stroke j
+    // spec[i][j]: share of drawn stroke j that belongs to guide stroke i
+    const cov = gs.map((g) => us.map((u) => frac(g, (p) => near(p, u, tc))));
+    const spec = gs.map((g) => us.map((u) => frac(u, (p) => near(p, g, tc))));
+
+    // Pair each guide stroke with its own drawn stroke (best matches first, each drawn stroke used once)
+    const owner = new Array(us.length).fill(-1);
+    const pairs = [];
+    gs.forEach((_, i) => us.forEach((_, j) => { if (cov[i][j] >= 0.3 && spec[i][j] >= 0.5) pairs.push([cov[i][j] * spec[i][j], i, j]); }));
+    pairs.sort((a, b) => b[0] - a[0]);
+    const hasOwn = new Array(gs.length).fill(false);
+    for (const [, i, j] of pairs) if (!hasOwn[i] && owner[j] < 0) { hasOwn[i] = true; owner[j] = i; }
+    // Extra drawn pieces (a stroke drawn in two goes, or traced twice) join the guide stroke they sit on
+    us.forEach((_, j) => {
+      if (owner[j] >= 0) return;
+      let best = -1, bs = 0.6;
+      gs.forEach((_, i) => { if (hasOwn[i] && spec[i][j] >= bs) { bs = spec[i][j]; best = i; } });
+      if (best >= 0) owner[j] = best;
     });
-    let ph = 0;
-    for (const p of up) if (near(p, all, tp2)) ph++;
-    const coverage = hit / tot, precision = ph / up.length;
-    const th = lenient ? { c: 0.62, s: 0.35, p: 0.45 } : { c: 0.8, s: 0.55, p: 0.6 };
-    return {
-      pass: coverage >= th.c && Math.min(...per) >= th.s && precision >= th.p,
-      coverage, precision, per,
-      coveredIdx: per.map((v, i) => (v >= 0.75 ? i : -1)).filter((i) => i >= 0),
-    };
+    // coverage of each guide stroke by ITS OWN drawn strokes only
+    const per = gs.map((g, i) => {
+      const mine = [].concat(...us.filter((_, j) => owner[j] === i));
+      return mine.length ? frac(g, (p) => near(p, mine, tc)) : 0;
+    });
+    const coveredIdx = per.map((v, i) => (v >= 0.75 ? i : -1)).filter((i) => i >= 0);
+
+    if (prec.some((v) => v < T.prec)) return res(false, 'stray', coveredIdx);
+    if (per.some((v) => v < T.own)) {
+      // every guide stroke is inked, but some share one drawn line → strokes were joined together
+      const allInk = [].concat(...us);
+      const joined = gs.every((g) => frac(g, (p) => near(p, allInk, tc)) >= T.own);
+      return res(false, joined ? 'joined' : 'missing', coveredIdx);
+    }
+    const allInk = [].concat(...us);
+    if (frac(allG, (p) => near(p, allInk, tc)) < T.total) return res(false, 'shape', coveredIdx);
+    return res(true, null, coveredIdx);
   }
 
   // ---------------------------------------------------------------------------
@@ -1916,8 +1953,9 @@
       Sfx.pop();
       if (doneRef.current || !board.current) return;
       if (!board.current.hasInk()) { Speech.say(SAY.inkFirst); return; }
-      if (board.current.check().pass) onSuccess();
-      else Speech.say(SAY.almost);
+      const r = board.current.check();
+      if (r.pass) onSuccess();
+      else Speech.say(SAY[r.reason] || SAY.almost); // stray / missing / joined / (shape → almost)
     }
     function toggleGrid() {
       Sfx.pop();
