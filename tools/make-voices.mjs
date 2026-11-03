@@ -60,7 +60,14 @@ async function api(pathname, init = {}) {
     });
     if (r.ok) return r.json();
     const body = await r.text();
-    if ((r.status === 429 || r.status >= 500) && attempt < 5) { await sleep(1500 * attempt); continue; }
+    // 429 = per-minute quota. Wait it out (Retry-After if given, else 15s, 30s, … up to ~2 min).
+    if (r.status === 429 && attempt < 7) {
+      const wait = Number(r.headers.get('retry-after')) * 1000 || Math.min(15000 * attempt, 120000);
+      process.stdout.write(`\n  ⏳ 요청이 많아 ${Math.round(wait / 1000)}초 쉬었다가 다시 해요…`);
+      await sleep(wait);
+      continue;
+    }
+    if (r.status >= 500 && attempt < 5) { await sleep(2000 * attempt); continue; }
     const err = new Error(`Google TTS 오류 ${r.status}: ${body.slice(0, 400)}`);
     err.status = r.status;
     err.body = body;
@@ -88,6 +95,22 @@ async function synthesize(text, voice, rate) {
     }
     throw e;
   }
+}
+
+// Google sometimes answers a lone syllable ("라!") with ~0.3s of silence (~1 KB). Real speech is
+// always bigger, so treat tiny files as failures and retry the syllable written differently.
+const MIN_BYTES = 1800;
+async function synthesizeChecked(text, voice, rate) {
+  const core = forTts(text).replace(/[!?.~,\s]/g, '');
+  const variants = [text];
+  if (core.length <= 2) variants.push(`${core}.`, core, `${core}~`, `${core}!!`, `${core}, `);
+  for (const v of variants) {
+    const mp3 = await synthesize(v, voice, rate);
+    if (mp3.length >= MIN_BYTES) return mp3;
+  }
+  const err = new Error('소리가 비어 있는 파일만 돌아왔어요 (무음)');
+  err.silent = true;
+  throw err;
 }
 
 async function listVoices() {
@@ -142,28 +165,43 @@ async function cmdBuild(voice, rate) {
   const ids = new Set(items.map((i) => i.id));
   if (ids.size !== items.length) fail('문장 파일 이름이 겹쳐요 (해시 충돌). 문장을 조금 바꿔 주세요.');
 
-  const todo = items.filter((i) => !(sameVoice && old.clips[i.id] === i.text && fs.existsSync(path.join(AUDIO, i.id + '.mp3'))));
+  // File names are hashes of the sentence, so an existing file already holds this exact sentence.
+  // Keep it as long as the voice/rate are unchanged (also resumes a run that stopped part-way).
+  const fileOk = (id) => { const f = path.join(AUDIO, id + '.mp3'); return fs.existsSync(f) && fs.statSync(f).size >= MIN_BYTES; };
+  const todo = items.filter((i) => !(sameVoice && fileOk(i.id))); // tiny = silent → make again
   const chars = todo.reduce((a, i) => a + forTts(i.text).length, 0);
   console.log(`\n목소리 ${voice}${rate ? ` · 빠르기 ${rate}` : ''}`);
   console.log(`문장 ${items.length}개 중 새로 만들 것 ${todo.length}개 (약 ${chars}자)\n`);
 
   let done = 0, failed = 0;
+  const silent = [];
   const queue = todo.slice();
   const worker = async () => {
     for (let it = queue.shift(); it; it = queue.shift()) {
       try {
-        fs.writeFileSync(path.join(AUDIO, it.id + '.mp3'), await synthesize(it.text, voice, rate));
+        fs.writeFileSync(path.join(AUDIO, it.id + '.mp3'), await synthesizeChecked(it.text, voice, rate));
         done++;
         process.stdout.write(`\r  ${done}/${todo.length} 만드는 중…`);
       } catch (e) {
+        if (e.silent) {
+          // Leave it out: the app then says that sentence with the device voice instead of silence.
+          silent.push(it.text);
+          const f = path.join(AUDIO, it.id + '.mp3');
+          if (fs.existsSync(f)) fs.unlinkSync(f);
+          console.log(`\n  ⚠️  "${it.text}": ${e.message} → 이 문장은 기기 음성으로 말해요`);
+          continue;
+        }
         failed++;
         console.log(`\n  ⚠️  "${it.text}": ${e.message.split('\n')[0]}`);
         if (e.status === 400 || e.status === 403) { queue.length = 0; console.log('\n' + e.message); }
       }
     }
   };
-  await Promise.all([worker(), worker(), worker(), worker()]);
-  if (failed) fail(`${failed}개를 만들지 못했어요. 위 오류를 확인해 주세요. (manifest는 바꾸지 않았어요)`);
+  await Promise.all([worker(), worker()]); // 2 at a time stays well under Google's per-minute quota
+  if (failed) {
+    fail(`${failed}개를 만들지 못했어요. 위 오류를 확인해 주세요.\n` +
+      `   같은 명령을 다시 실행하면 이미 만든 파일은 건너뛰고 나머지만 만들어요. (manifest는 아직 바꾸지 않았어요)`);
+  }
 
   // Remove files for sentences the app no longer says.
   let removed = 0;
@@ -175,11 +213,13 @@ async function cmdBuild(voice, rate) {
     voice,
     rate: rate || null,
     generated: new Date().toISOString(),
-    clips: Object.fromEntries(items.map((i) => [i.id, i.text])),
+    clips: Object.fromEntries(items.filter((i) => fileOk(i.id)).map((i) => [i.id, i.text])),
   };
   fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n');
   const size = fs.readdirSync(AUDIO).filter((f) => f.endsWith('.mp3')).reduce((a, f) => a + fs.statSync(path.join(AUDIO, f)).size, 0);
-  console.log(`\n\n✅ 완료: ${items.length}개 문장 (${(size / 1024 / 1024).toFixed(1)}MB)${removed ? `, 안 쓰는 파일 ${removed}개 삭제` : ''}`);
+  const made = Object.keys(manifest.clips).length;
+  console.log(`\n\n✅ 완료: ${made}/${items.length}개 문장 (${(size / 1024 / 1024).toFixed(1)}MB)${removed ? `, 안 쓰는 파일 ${removed}개 삭제` : ''}`);
+  if (silent.length) console.log(`ℹ️  무음이라 뺀 문장 ${silent.length}개 (기기 음성으로 말해요): ${silent.join(', ')}`);
   console.log(`📁 ${AUDIO}\n`);
 }
 

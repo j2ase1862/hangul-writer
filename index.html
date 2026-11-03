@@ -112,6 +112,11 @@
     .workspace { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto; grid-template-areas: "info" "board" "controls"; }
     .card-text { flex-direction: row; align-items: center; justify-content: space-between; }
     .counter { flex: none; }
+    /* one row of buttons: flatten the rows and order the buttons */
+    .actions { gap: 12px; }
+    .act-row { display: contents; }
+    .o1 { order: 1; } .o2 { order: 2; } .o3 { order: 3; } .o4 { order: 4; } .o5 { order: 5; }
+    .landscape-only { display: none; }
   }
   /* Short landscape screens (iPad 11"): compact the top bars so the paper stays big */
   @media (orientation: landscape) and (max-height: 900px) {
@@ -316,7 +321,8 @@
       if (!synth || muted || !text) return;
       if (!voice) load();
       if (!queue && (synth.speaking || synth.pending)) synth.cancel();
-      const u = new SpeechSynthesisUtterance(text);
+      // "|" part breaks → a comma pause ("우유의, 우!"), or just a space after ! ? .
+      const u = new SpeechSynthesisUtterance(text.replace(/([!?.])\s*\|\s*/g, '$1 ').replace(/\s*\|\s*/g, ', '));
       u.lang = 'ko-KR';
       const v = (voiceURI && koVoices().find((x) => idOf(x) === voiceURI)) || voice;
       if (v) u.voice = v;
@@ -476,23 +482,29 @@
       if (src) { try { src.stop(); } catch (e) {} src = null; }
       chain = Promise.resolve();
     }
-    // Returns true if a voice file will say this sentence (fallback() runs if the file can't be played).
+    const PART_GAP_MS = 320; // pause between "우유의" and "우!"
+    // Returns true if voice files will say this sentence (fallback() runs if a file can't be played).
+    // A sentence may have several "|" parts; every part needs its own file, played with a short pause.
     function play(text, queue, fallback) {
-      const id = idFor(text);
-      const c = id && Sfx.context();
+      const ids = splitParts(text).map(idFor);
+      if (!ids.length || ids.some((id) => !id)) return false;
+      const c = Sfx.context();
       if (!c) return false;
       if (!queue) stop();
       const my = token;
-      const buf = load(id);
-      chain = chain.then(() => buf).then((b) => new Promise((done) => {
-        if (my !== token) return done();
-        const s = c.createBufferSource();
-        s.buffer = b;
-        s.connect(c.destination);
-        s.onended = () => { if (src === s) src = null; done(); };
-        src = s;
-        s.start();
-      })).catch(() => { if (my === token && fallback) fallback(); });
+      const bufs = ids.map(load);
+      bufs.forEach((buf, k) => {
+        chain = chain.then(() => buf).then((b) => new Promise((done) => {
+          if (my !== token) return done();
+          const s = c.createBufferSource();
+          s.buffer = b;
+          s.connect(c.destination);
+          s.onended = () => { if (src === s) src = null; setTimeout(done, k < bufs.length - 1 ? PART_GAP_MS : 0); };
+          src = s;
+          s.start();
+        }));
+      });
+      chain = chain.catch(() => { if (my === token && fallback) fallback(); });
       return true;
     }
     // Decode everything quietly in the background so later sentences start instantly.
@@ -665,31 +677,55 @@
 
   const CONSONANTS = ['ㄱ','ㄴ','ㄷ','ㄹ','ㅁ','ㅂ','ㅅ','ㅇ','ㅈ','ㅊ','ㅋ','ㅌ','ㅍ','ㅎ'];
   const VOWELS = ['ㅏ','ㅑ','ㅓ','ㅕ','ㅗ','ㅛ','ㅜ','ㅠ','ㅡ','ㅣ'];
-  const WORDS = [
-    ['아기', '👶'], ['오리', '🦆'], ['우유', '🥛'], ['나비', '🦋'], ['바다', '🌊'], ['하마', '🦛'],
-    ['사자', '🦁'], ['포도', '🍇'], ['기차', '🚂'], ['모자', '🧢'], ['나무', '🌳'], ['피자', '🍕'],
-    ['고구마', '🍠'], ['바나나', '🍌'], ['곰', '🐻'], ['공', '⚽'], ['엄마', '👩'], ['별', '⭐'],
+  // 낱말 by theme, easiest first (no 받침 → 3 letters → 받침). Only letters the app can draw:
+  // basic consonants/vowels + single 받침 (no ㅐ/ㅔ, 쌍자음, 겹모음 yet).
+  const WORD_THEMES = [
+    { id: 'animals', label: '동물', icon: '🐻', words: [
+      ['소', '🐮'], ['말', '🐴'], ['곰', '🐻'], ['오리', '🦆'], ['하마', '🦛'], ['사자', '🦁'], ['여우', '🦊'], ['나비', '🦋'],
+      ['거미', '🕷️'], ['기린', '🦒'], ['문어', '🐙'], ['상어', '🦈'], ['공룡', '🦕'],
+      ['호랑이', '🐯'], ['거북이', '🐢'], ['고양이', '🐱'], ['오징어', '🦑'],
+    ] },
+    { id: 'food', label: '음식', icon: '🍉', words: [
+      ['우유', '🥛'], ['오이', '🥒'], ['포도', '🍇'], ['피자', '🍕'], ['가지', '🍆'], ['치즈', '🧀'],
+      ['바나나', '🍌'], ['고구마', '🍠'], ['토마토', '🍅'],
+      ['귤', '🍊'], ['수박', '🍉'], ['감자', '🥔'], ['당근', '🥕'], ['만두', '🥟'], ['사탕', '🍬'], ['양파', '🧅'], ['옥수수', '🌽'],
+    ] },
+    { id: 'family', label: '가족·몸', icon: '👩', words: [
+      ['코', '👃'], ['아기', '👶'], ['누나', '👧'], ['다리', '🦵'],
+      ['눈', '👀'], ['입', '👄'], ['손', '✋'], ['발', '🦶'], ['엄마', '👩'], ['친구', '🧒'], ['할머니', '👵'], ['할아버지', '👴'],
+    ] },
+    { id: 'things', label: '탈것·물건', icon: '🚗', words: [
+      ['기차', '🚂'], ['모자', '🧢'], ['버스', '🚌'], ['구두', '👞'], ['피아노', '🎹'], ['자동차', '🚗'], ['소방차', '🚒'],
+      ['공', '⚽'], ['북', '🥁'], ['우산', '☂️'], ['가방', '🎒'], ['로봇', '🤖'], ['연필', '✏️'], ['풍선', '🎈'], ['인형', '🧸'], ['우주선', '🚀'],
+    ] },
+    { id: 'nature', label: '자연', icon: '🌳', words: [
+      ['비', '🌧️'], ['바다', '🌊'], ['나무', '🌳'],
+      ['달', '🌙'], ['별', '⭐'], ['산', '⛰️'], ['물', '💧'], ['불', '🔥'], ['돌', '🪨'], ['구름', '☁️'], ['바람', '🌬️'],
+    ] },
   ];
 
+  // Spoken prompts use "|" between parts: each part is its own voice file and the app leaves a short
+  // pause between them, so "우유의 | 우!" is heard clearly instead of running together ("우유우").
   function jamoItem(ch) {
     const j = JAMO[ch];
     return {
       key: 'j:' + ch, kind: j.v ? 'vowel' : 'consonant', glyph: ch, name: j.name,
       emoji: j.ex[1], word: j.ex[0],
       strokes: mapRect(j.s, BOX[j.v || 'C']),
-      // Commas give the TTS engine natural, child-friendly pauses: "기역! 기차의, 기!"
-      speak: `${j.name}! ${j.ex[0]}의, ${j.ex[0][0]}!`,
+      speak: `${j.name}! | ${j.ex[0]}의 | ${j.ex[0][0]}!`,
     };
   }
   function syllableItem(ch, word, emoji) {
-    return { key: 's:' + ch, kind: 'syllable', glyph: ch, name: ch, emoji, word, strokes: syllableStrokes(ch), speak: `${word}의, '${ch}'!` };
+    return { key: 's:' + ch, kind: 'syllable', glyph: ch, name: ch, emoji, word, strokes: syllableStrokes(ch), speak: `${word}의 | ${ch}!` };
   }
+  const wordItem = ([w, e]) => ({ key: 'w:' + w, kind: 'word', word: w, emoji: e, syllables: [...w].map((ch) => syllableItem(ch, w, e)) });
+  WORD_THEMES.forEach((t) => { t.items = t.words.map(wordItem); });
 
   const ITEMS = {
     lines: LINES.map((l) => ({ key: 'l:' + l.id, kind: 'line', name: l.label, emoji: l.emoji, word: l.label, strokes: l.s, speak: l.say })),
     consonants: CONSONANTS.map(jamoItem),
     vowels: VOWELS.map(jamoItem),
-    words: WORDS.map(([w, e]) => ({ key: 'w:' + w, kind: 'word', word: w, emoji: e, syllables: [...w].map((ch) => syllableItem(ch, w, e)) })),
+    words: [].concat(...WORD_THEMES.map((t) => t.items)),
   };
   const SYLLABLES = (() => {
     const seen = new Set(), out = [];
@@ -724,7 +760,7 @@
     retry: '다시 써볼까?',
     inkFirst: '먼저 따라서 써 볼까?',
     almost: '조금만 더! 선을 따라서 써 볼까?',
-    wordIntro: (w, s) => `${w.word}! ${s.speak}`,
+    wordIntro: (w, s) => `${w.word}! | ${s.speak}`,
     wordDone: (w) => `${w.word}! 다 썼어요!`,
     milestone: (n) => `우와! 벌써 ${n}번이나 썼어요!`,
   };
@@ -738,8 +774,12 @@
       w.syllables.forEach((s) => out.add(s.speak));
     });
     for (let n = 5; n <= MILESTONE_MAX; n += 5) out.add(SAY.milestone(n));
-    return [...out];
+    // one voice file per "|" part
+    const parts = new Set();
+    out.forEach((t) => splitParts(t).forEach((p) => parts.add(p)));
+    return [...parts];
   }
+  const splitParts = (text) => text.split('|').map((s) => s.trim()).filter(Boolean);
   // Stable file name for a sentence (FNV-1a 32-bit hex). The generator runs this exact code too.
   function phraseId(text) {
     let h = 0x811c9dc5;
@@ -1005,7 +1045,7 @@
       // Keep room on both sides for the crayon rail so the paper stays centred.
       const measure = (w, h) => {
         const rail = P.current.railWidth ? 2 * (P.current.railWidth + RAIL_GAP) : 0;
-        setS(Math.max(220, Math.floor(Math.min(w - rail - 2 * BORDER - 8, h - 2 * BORDER - 40))));
+        setS(Math.max(220, Math.floor(Math.min(w - rail - 2 * BORDER - 8, h - 2 * BORDER - 20))));
       };
       const ro = new ResizeObserver((entries) => {
         const r = entries[0].contentRect;
@@ -1308,6 +1348,7 @@
     const [idx, setIdx] = useState({ lines: 0, consonants: 0, vowels: 0, words: 0 });
     const [syl, setSyl] = useState(0);
     const [pCat, setPCat] = useState(1);
+    const [wTheme, setWTheme] = useState(0);
     const [pIdx, setPIdx] = useState(0);
     const [grid, setGrid] = useState(true);
     const [color, setColor] = useState(CRAYONS[0]);
@@ -1342,10 +1383,11 @@
     }
 
     const isPractice = tab === 'practice';
-    const word = tab === 'words' ? ITEMS.words[idx.words] : null;
+    const tabList = tab === 'words' ? WORD_THEMES[wTheme].items : ITEMS[tab]; // 낱말: only the chosen theme
+    const word = tab === 'words' ? tabList[idx.words] : null;
     const pItems = PCATS[pCat].items;
     const current = isPractice ? pItems[pIdx] : word ? word.syllables[syl] : ITEMS[tab][idx[tab]];
-    const pickerItems = isPractice ? pItems : ITEMS[tab];
+    const pickerItems = isPractice ? pItems : tabList;
     const pickerActive = isPractice ? pIdx : idx[tab];
     const total = useMemo(() => Object.keys(progress).filter((k) => !k.startsWith('w:')).reduce((a, k) => a + progress[k], 0), [progress]);
     const showGuide = isPractice ? grid : true;
@@ -1401,18 +1443,23 @@
       if (i === pCat) return;
       navigate(() => { setPCat(i); setPIdx(0); setReps(0); });
     }
+    function pickTheme(i) {
+      Sfx.pop();
+      if (i === wTheme) return;
+      navigate(() => { setWTheme(i); setIdx((o) => ({ ...o, words: 0 })); setSyl(0); });
+    }
     function next() {
       Sfx.pop();
       navigate(() => {
         if (isPractice) { setPIdx((i) => (i + 1) % pItems.length); setReps(0); }
-        else { setIdx((o) => ({ ...o, [tab]: (o[tab] + 1) % ITEMS[tab].length })); setSyl(0); }
+        else { setIdx((o) => ({ ...o, [tab]: (o[tab] + 1) % tabList.length })); setSyl(0); }
       });
     }
     function prev() {
       Sfx.pop();
       navigate(() => {
         if (isPractice) { setPIdx((i) => (i - 1 + pItems.length) % pItems.length); setReps(0); }
-        else { setIdx((o) => ({ ...o, [tab]: (o[tab] - 1 + ITEMS[tab].length) % ITEMS[tab].length })); setSyl(0); }
+        else { setIdx((o) => ({ ...o, [tab]: (o[tab] - 1 + tabList.length) % tabList.length })); setSyl(0); }
       });
     }
     function pickSyllable(i) {
@@ -1512,12 +1559,22 @@
         })}
       </nav>`;
 
-    const catPills = isPractice && html`
+    const catPills = isPractice ? html`
       <div className="flex-none flex gap-2 pr-2 border-r-4 border-dashed border-violet-100">
         ${PCATS.map((c, i) => html`<button key=${c.id} onClick=${() => pickCat(i)}
             className="chip min-w-[66px] px-2 rounded-2xl text-[21px] border-4"
             style=${i === pCat ? { background: '#A78BFA', color: '#fff', borderColor: '#A78BFA' } : { background: '#fff', color: '#7C3AED', borderColor: '#EDE9FE' }}>${c.label}</button>`)}
-      </div>`;
+      </div>`
+    : tab === 'words' ? html`
+      <div className="flex-none flex gap-2 pr-2 border-r-4 border-dashed border-pink-100" role="tablist" aria-label="낱말 주제">
+        ${WORD_THEMES.map((t, i) => html`<button key=${t.id} onClick=${() => pickTheme(i)} role="tab" aria-selected=${i === wTheme} aria-label=${t.label}
+            className="chip w-[70px] rounded-2xl border-4 flex flex-col items-center justify-center gap-1"
+            style=${i === wTheme ? { background: '#F472B6', color: '#fff', borderColor: '#F472B6' } : { background: '#fff', color: '#DB2777', borderColor: '#FCE7F3' }}>
+            <span className="text-[28px] leading-none">${t.icon}</span>
+            <span className="text-[14px] leading-none whitespace-nowrap">${t.label}</span>
+          </button>`)}
+      </div>`
+    : null;
 
     // Model card: what to write
     let glyph, label;
@@ -1573,7 +1630,7 @@
 
     const gridToggle = html`
       <button onClick=${toggleGrid} aria-pressed=${grid} aria-label="칸 도우미"
-          className="btn3d flex-1 min-w-0 h-[64px] rounded-[22px] px-4 flex items-center justify-center gap-2 text-[21px] leading-none border-4"
+          className="btn3d o5 flex-1 min-w-0 h-[64px] rounded-[22px] px-4 flex items-center justify-center gap-2 text-[21px] leading-none border-4"
           style=${grid ? { background: '#F5F3FF', borderColor: '#C4B5FD', color: '#6D28D9' } : { background: '#fff', borderColor: '#E2E8F0', color: '#64748B' }}>
         <${Icon} name="Grid2x2" size=${26} />
         <span className="whitespace-nowrap">칸 도우미</span>
@@ -1581,18 +1638,24 @@
       </button>`;
 
     // Secondary actions are outlined, the one thing to do next is solid.
+    // portrait : one row   [따라 보기][다 했어요][◀][다시 쓰기][다음]        (o1…o5 set the order)
+    // landscape: 3 rows    [따라 보기][다 했어요] / [◀][다음 낱말] / [다시 쓰기]
+    const nextLabel = html`<${Frag}>다음${word ? html`<span className="landscape-only"> 낱말</span>` : ''}<//>`;
     const controls = html`
       <div className="actions">
         <div className="act-row">
-          <${BigBtn} onClick=${demo} bg="#fff" fg="#0284C7" border="#BAE6FD" icon="Play" className="flex-1">따라 보기<//>
-          <${BigBtn} onClick=${check} bg="#22C55E" icon="Check" disabled=${done} className="flex-1">다 했어요<//>
+          <${BigBtn} onClick=${demo} bg="#fff" fg="#0284C7" border="#BAE6FD" icon="Play" className="flex-1 o1">따라 보기<//>
+          <${BigBtn} onClick=${check} bg="#22C55E" icon="Check" disabled=${done} className="flex-1 o2">다 했어요<//>
         </div>
         <div className="act-row">
           ${isPractice ? gridToggle : html`<${Frag}>
-            <${BigBtn} onClick=${prev} bg="#fff" fg="#64748B" border="#E2E8F0" icon="ChevronLeft" label="이전" className="w-[72px] flex-none !px-0" />
-            <${BigBtn} onClick=${next} bg="#A78BFA" icon="ChevronRight" pulse=${done && (!word || wordDone)} className="flex-1">
-              ${word ? '다음 낱말' : '다음'}<//>
+            <${BigBtn} onClick=${prev} bg="#fff" fg="#64748B" border="#E2E8F0" icon="ChevronLeft" label="이전" className="w-[64px] flex-none !px-0 o3" />
+            <${BigBtn} onClick=${next} bg="#A78BFA" icon="ChevronRight" label=${word ? '다음 낱말' : '다음'}
+                       pulse=${done && (!word || wordDone)} className="flex-1 o5">${nextLabel}<//>
           <//>`}
+        </div>
+        <div className="act-row">
+          <${BigBtn} onClick=${refresh} bg="#FB923C" icon="RotateCcw" className="flex-1 o4">다시 쓰기<//>
         </div>
       </div>`;
 
@@ -1638,10 +1701,6 @@
           <${Board} ref=${board} item=${current} session=${session} showGrid=${showGuide} showGuide=${showGuide}
                     color=${color} locked=${done} onSuccess=${onSuccess} penOnly=${penOnly} onPen=${onPen}
                     rail=${rail} railWidth=${78}>
-            <button onClick=${refresh} aria-label="다시 쓰기"
-                    className="btn3d absolute right-5 -bottom-7 z-10 h-[64px] px-6 rounded-full bg-orange-400 text-white text-[22px] flex items-center gap-2 border-4 border-white">
-              <${Icon} name="RotateCcw" size=${26} /> 다시 쓰기
-            </button>
             ${stamp > 0 && html`
               <div key=${stamp} className="stamp text-center">
                 <div className="text-[150px] leading-none" style=${{ filter: 'drop-shadow(0 8px 0 rgba(234,179,8,.35))' }}>⭐</div>
