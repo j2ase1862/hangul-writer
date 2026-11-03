@@ -1,0 +1,1421 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="default" />
+<meta name="apple-mobile-web-app-title" content="한글 쓰기" />
+<meta name="format-detection" content="telephone=no" />
+<meta name="theme-color" content="#FFF8EE" />
+<title>몽글몽글 한글 쓰기</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🐣</text></svg>" />
+
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Jua&display=swap" rel="stylesheet" />
+
+<!-- Tailwind CSS (Play CDN) -->
+<script src="https://cdn.tailwindcss.com/3.4.16"></script>
+<script>
+  tailwind.config = { theme: { extend: { fontFamily: { jua: ['Jua', 'system-ui', 'sans-serif'] } } } };
+</script>
+
+<!-- React 18 + htm (JSX-like templates without a build step / without in-browser Babel) -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/htm@3.1.1/dist/htm.umd.js"></script>
+<!-- lucide-react's UMD build looks for a lowercase `react` global -->
+<script>window.react = window.React;</script>
+<script src="https://unpkg.com/lucide-react@0.460.0/dist/umd/lucide-react.min.js"></script>
+<!-- Canvas Confetti -->
+<script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.3/dist/confetti.browser.min.js"></script>
+
+<style>
+  html, body {
+    margin: 0; width: 100%; height: 100%;
+    position: fixed; inset: 0;
+    overflow: hidden;
+    overscroll-behavior: none;
+    background: #FFF8EE;
+  }
+  body {
+    font-family: 'Jua', system-ui, -apple-system, sans-serif;
+    color: #4A3F5C;
+    -webkit-user-select: none; user-select: none;
+    -webkit-touch-callout: none;
+    -webkit-tap-highlight-color: transparent;
+    -webkit-text-size-adjust: 100%;
+    touch-action: manipulation;
+  }
+  #root { height: 100%; }
+  button { font-family: inherit; touch-action: manipulation; cursor: pointer; }
+
+  /* Drawing surface: no scrolling, zooming, or system gestures */
+  .pad, .pad canvas { touch-action: none; -ms-touch-action: none; }
+  .pad canvas { position: absolute; left: 0; top: 0; display: block; }
+
+  /* Horizontal picker strip is the only scrollable area */
+  .scroll-x {
+    overflow-x: auto; overflow-y: hidden;
+    touch-action: pan-x;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+  }
+  .scroll-x::-webkit-scrollbar { display: none; }
+
+  .title-grad {
+    background: linear-gradient(90deg, #FB7185, #FB923C 45%, #A78BFA);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  .soft { box-shadow: 0 8px 24px rgba(251, 146, 60, 0.14), 0 2px 0 rgba(0,0,0,0.04); }
+
+  /* Chunky "press-down" buttons */
+  .btn3d { box-shadow: 0 6px 0 rgba(0,0,0,0.16); transition: transform .08s ease, box-shadow .08s ease, filter .15s; }
+  .btn3d:active { transform: translateY(4px); box-shadow: 0 2px 0 rgba(0,0,0,0.16); }
+  .btn3d:disabled { filter: grayscale(.6) opacity(.55); }
+
+  /* Layout: landscape = board + side column; portrait = board over a side panel */
+  .workspace { flex: 1 1 0; min-height: 0; display: flex; gap: 16px; padding: 0 16px 16px; }
+  .board-area { flex: 1 1 0; min-width: 0; min-height: 0; position: relative; display: flex; align-items: center; justify-content: center; }
+  .side { flex: none; min-height: 0; }
+  .actions { display: grid; gap: 12px; }
+  .card-inner { display: flex; gap: 14px; align-items: center; }
+  .glyph-box { flex: none; display: grid; place-items: center; border-radius: 24px; background: #FFF4E6; }
+
+  @media (orientation: landscape) {
+    .workspace { flex-direction: row; }
+    .side { width: 372px; display: flex; flex-direction: column; gap: 14px; overflow-y: auto; overflow-x: hidden; padding: 4px 6px 10px; }
+    .actions { grid-template-columns: 1fr 1fr; }
+    .card-inner { flex-direction: column; text-align: center; }
+    .glyph-box { width: 150px; height: 150px; }
+    .practice .glyph-box { width: 118px; height: 118px; }
+  }
+  @media (orientation: portrait) {
+    .workspace { flex-direction: column; }
+    .side { display: grid; grid-template-columns: minmax(280px, 38%) 1fr; grid-auto-rows: min-content; gap: 12px; }
+    .side > .card { grid-row: 1 / span 3; }
+    .actions { grid-template-columns: repeat(4, 1fr); }
+    .card-inner { flex-direction: row; }
+    .glyph-box { width: 124px; height: 124px; }
+  }
+
+  /* Animations */
+  .wipe { animation: wipe .45s ease-in forwards; transform-origin: 50% 50%; }
+  @keyframes wipe { to { opacity: 0; transform: scale(.9) rotate(-3deg); filter: blur(8px); } }
+
+  .stamp { position: absolute; left: 50%; top: 50%; pointer-events: none; animation: stamp 1.5s cubic-bezier(.2,1.4,.4,1) forwards; z-index: 5; }
+  @keyframes stamp {
+    0%   { transform: translate(-50%,-50%) scale(2.6) rotate(-25deg); opacity: 0; }
+    22%  { transform: translate(-50%,-50%) scale(1) rotate(0deg);     opacity: 1; }
+    78%  { transform: translate(-50%,-50%) scale(1.04);                opacity: 1; }
+    100% { transform: translate(-50%,-62%) scale(.8);                  opacity: 0; }
+  }
+
+  .bubble { position: absolute; border-radius: 50%; pointer-events: none;
+    background: radial-gradient(circle at 32% 30%, #fff 0 18%, rgba(186,230,253,.75) 45%, rgba(147,197,253,.35) 100%);
+    border: 2px solid rgba(255,255,255,.9);
+    animation: bubble .95s ease-out forwards; }
+  @keyframes bubble { from { transform: translate(0,0) scale(.3); opacity: .95; } to { transform: translate(var(--dx), var(--dy)) scale(1.15); opacity: 0; } }
+
+  .pop-in { animation: popin .45s cubic-bezier(.2,1.7,.4,1); display: inline-block; }
+  @keyframes popin { from { transform: scale(0); } to { transform: scale(1); } }
+
+  .wiggle { animation: wiggle 1.1s ease-in-out infinite; }
+  @keyframes wiggle { 0%,100% { transform: scale(1) rotate(0); } 25% { transform: scale(1.06) rotate(-2deg); } 75% { transform: scale(1.06) rotate(2deg); } }
+
+  .float { animation: float 3.2s ease-in-out infinite; }
+  @keyframes float { 50% { transform: translateY(-14px); } }
+
+  @media (prefers-reduced-motion: reduce) {
+    .wiggle, .float { animation: none; }
+  }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<noscript><p style="padding:24px;font-size:24px">자바스크립트를 켜 주세요.</p></noscript>
+
+<script>
+(function () {
+  'use strict';
+
+  // ---------------------------------------------------------------------------
+  // Boot guard (CDN failure)
+  // ---------------------------------------------------------------------------
+  if (!window.React || !window.ReactDOM || !window.htm) {
+    document.getElementById('root').innerHTML =
+      '<div style="height:100%;display:grid;place-items:center;text-align:center;font-size:28px;padding:24px">' +
+      '🐣<br/>앱을 불러오지 못했어요.<br/><span style="font-size:20px;color:#888">인터넷 연결을 확인하고 새로고침 해 주세요.</span></div>';
+    return;
+  }
+
+  const { useState, useEffect, useLayoutEffect, useRef, useMemo, forwardRef, useImperativeHandle } = React;
+  const html = htm.bind(React.createElement);
+  const Frag = React.Fragment;
+
+  // ---------------------------------------------------------------------------
+  // iPad gesture lockdown: no rubber-band scrolling, pinch zoom, or double-tap zoom
+  // ---------------------------------------------------------------------------
+  document.addEventListener('touchmove', (e) => {
+    if (!(e.target.closest && e.target.closest('.scroll-x'))) e.preventDefault();
+  }, { passive: false });
+  ['gesturestart', 'gesturechange', 'gestureend'].forEach((t) =>
+    document.addEventListener(t, (e) => e.preventDefault(), { passive: false }));
+  document.addEventListener('contextmenu', (e) => e.preventDefault());
+  let lastTouchEnd = 0;
+  document.addEventListener('touchend', (e) => {
+    const now = Date.now();
+    if (now - lastTouchEnd < 320 && !(e.target.closest && e.target.closest('button'))) e.preventDefault();
+    lastTouchEnd = now;
+  }, { passive: false });
+
+  // ---------------------------------------------------------------------------
+  // Small utilities
+  // ---------------------------------------------------------------------------
+  const store = {
+    get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
+    set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* private mode */ } },
+  };
+  const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const easeInOut = (t) => (t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2);
+  const hexA = (hex, a) => {
+    const n = parseInt(hex.slice(1), 16);
+    return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+  };
+
+  const Icon = ({ name, size = 28, stroke = 2.6, className = '' }) => {
+    const C = window.LucideReact && window.LucideReact[name];
+    return C ? html`<${C} size=${size} strokeWidth=${stroke} className=${className} aria-hidden="true" />` : null;
+  };
+
+  // ---------------------------------------------------------------------------
+  // Speech (tuned for a 5-year-old: slow + bright)
+  // ---------------------------------------------------------------------------
+  const Speech = (() => {
+    const synth = window.speechSynthesis || null;
+    let voice = null;
+    let muted = false;
+    const keep = []; // iOS: keep references so utterances aren't garbage-collected mid-sentence
+
+    const NOVELTY = /(eddy|flo|grandma|grandpa|reed|rocko|sandy|shelley|albert|bad news|bahh|bells|boing|bubbles|cellos|jester|organ|superstar|trinoids|whisper|wobble|zarvox|good news|junior|ralph|fred|kathy)/i;
+    function score(v) {
+      const n = (v.name || '') + ' ' + (v.voiceURI || '');
+      let s = 0;
+      if (/siri/i.test(n)) s += 60;
+      if (/yuna|유나/i.test(n)) s += 50;
+      if (/premium|enhanced|프리미엄|향상|고음질/i.test(n)) s += 40;
+      if (/natural|neural|online/i.test(n)) s += 45; // Edge "SunHi Online (Natural)" etc. — far less robotic
+      if (/sunhi|seoyeon|jimin|sora/i.test(n)) s += 10;
+      if (/google/i.test(n)) s += 8;               // still better than the old desktop voices below
+      if (/heami/i.test(n)) s -= 5;                 // oldest Windows voice: very robotic
+      if (v.localService) s += 2;
+      if (NOVELTY.test(n)) s -= 80;
+      return s;
+    }
+    function load() {
+      if (!synth) return;
+      const ko = synth.getVoices().filter((v) => /^ko([-_]|$)/i.test(v.lang || ''));
+      if (ko.length) voice = ko.sort((a, b) => score(b) - score(a))[0];
+    }
+    if (synth) {
+      load();
+      if (synth.addEventListener) synth.addEventListener('voiceschanged', load);
+      else synth.onvoiceschanged = load;
+    }
+    // Must be called synchronously inside a tap handler at least once on iOS to unlock speech.
+    // Slightly slow and only a touch brighter: a big pitch shift / very slow rate is what makes TTS sound robotic.
+    function say(text, { rate = 0.85, pitch = 1.05, queue = false } = {}) {
+      if (!synth || muted || !text) return;
+      if (!voice) load();
+      if (!queue && (synth.speaking || synth.pending)) synth.cancel();
+      const u = new SpeechSynthesisUtterance(text);
+      u.lang = 'ko-KR';
+      if (voice) u.voice = voice;
+      u.rate = rate;
+      u.pitch = pitch;
+      u.volume = 1;
+      keep.push(u); if (keep.length > 6) keep.shift();
+      try { synth.resume(); } catch (e) {}
+      synth.speak(u);
+    }
+    return {
+      say,
+      stop() { if (synth) synth.cancel(); },
+      setMuted(m) { muted = m; if (m && synth) synth.cancel(); },
+    };
+  })();
+  document.addEventListener('visibilitychange', () => { if (document.hidden) Speech.stop(); });
+
+  // ---------------------------------------------------------------------------
+  // Sound effects (synthesised with Web Audio; no audio files)
+  // ---------------------------------------------------------------------------
+  const Sfx = (() => {
+    let ctx = null;
+    let muted = false;
+    let noiseBuf = null;
+    function ac() {
+      if (muted) return null;
+      if (!ctx) {
+        const C = window.AudioContext || window.webkitAudioContext;
+        if (!C) return null;
+        ctx = new C();
+      }
+      if (ctx.state === 'suspended') ctx.resume();
+      return ctx;
+    }
+    function tone(f, start, dur, { type = 'sine', vol = 0.15, to = null } = {}) {
+      const c = ac(); if (!c) return;
+      const t0 = c.currentTime + start;
+      const o = c.createOscillator();
+      const g = c.createGain();
+      o.type = type;
+      o.frequency.setValueAtTime(f, t0);
+      if (to) o.frequency.exponentialRampToValueAtTime(to, t0 + dur);
+      g.gain.setValueAtTime(0.0001, t0);
+      g.gain.exponentialRampToValueAtTime(vol, t0 + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+      o.connect(g); g.connect(c.destination);
+      o.start(t0); o.stop(t0 + dur + 0.05);
+    }
+    return {
+      setMuted(m) { muted = m; },
+      unlock() {
+        const c = ac(); if (!c) return;
+        const b = c.createBuffer(1, 1, 22050);
+        const s = c.createBufferSource();
+        s.buffer = b; s.connect(c.destination); s.start(0);
+      },
+      pop() { tone(620, 0, 0.12, { vol: 0.12, to: 940 }); },
+      tick() { tone(1175, 0, 0.18, { type: 'triangle', vol: 0.09 }); },
+      clear() {
+        tone(900, 0, 0.38, { vol: 0.1, to: 260 });
+        tone(520, 0.12, 0.09, { vol: 0.08, to: 780 });
+        tone(680, 0.22, 0.09, { vol: 0.07, to: 1000 });
+        tone(840, 0.32, 0.09, { vol: 0.06, to: 1250 });
+      },
+      success() {
+        [523, 659, 784, 1047].forEach((f, i) => tone(f, i * 0.09, 0.36, { type: 'triangle', vol: 0.14 }));
+        tone(1568, 0.4, 0.55, { vol: 0.06 });
+      },
+      // Twinkly glitter that plays along with the confetti ("반짝반짝" as a sound, not a word)
+      sparkle() {
+        for (let i = 0; i < 9; i++) {
+          const f = 1800 + Math.random() * 1600;
+          tone(f, 0.35 + i * 0.07 + Math.random() * 0.03, 0.22, { vol: 0.045, to: f * 1.15 });
+        }
+      },
+      // Three soft hand claps ("짝짝짝" as a sound): filtered noise bursts
+      clap() {
+        const c = ac(); if (!c) return;
+        if (!noiseBuf) {
+          noiseBuf = c.createBuffer(1, Math.floor(c.sampleRate * 0.2), c.sampleRate);
+          const d = noiseBuf.getChannelData(0);
+          for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+        }
+        [0.45, 0.68, 0.91].forEach((start) => {
+          const t0 = c.currentTime + start;
+          const src = c.createBufferSource();
+          const bp = c.createBiquadFilter();
+          const g = c.createGain();
+          src.buffer = noiseBuf;
+          bp.type = 'bandpass'; bp.frequency.value = 1400; bp.Q.value = 0.9;
+          g.gain.setValueAtTime(0.0001, t0);
+          g.gain.exponentialRampToValueAtTime(0.5, t0 + 0.004);
+          g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.13);
+          src.connect(bp); bp.connect(g); g.connect(c.destination);
+          src.start(t0); src.stop(t0 + 0.16);
+        });
+      },
+    };
+  })();
+
+  // ---------------------------------------------------------------------------
+  // Geometry helpers (all stroke data lives in a 0..1 unit square)
+  // ---------------------------------------------------------------------------
+  const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
+  const pathLen = (s) => { let L = 0; for (let i = 1; i < s.length; i++) L += dist(s[i - 1], s[i]); return L; };
+
+  function quad(p0, c, p1, n = 18) {
+    const out = [];
+    for (let i = 0; i <= n; i++) {
+      const t = i / n, u = 1 - t;
+      out.push([u * u * p0[0] + 2 * u * t * c[0] + t * t * p1[0], u * u * p0[1] + 2 * u * t * c[1] + t * t * p1[1]]);
+    }
+    return out;
+  }
+  // Starts at the top and goes counter-clockwise (Korean ㅇ stroke direction)
+  function ellipse(cx, cy, rx, ry, n = 56) {
+    const out = [];
+    for (let i = 0; i <= n; i++) {
+      const a = -Math.PI / 2 - (i / n) * Math.PI * 2;
+      out.push([cx + rx * Math.cos(a), cy + ry * Math.sin(a)]);
+    }
+    return out;
+  }
+  const join = (...parts) => parts.reduce((acc, p) => acc.concat(acc.length ? p.slice(1) : p), []);
+  const mapRect = (strokes, [x0, y0, x1, y1]) =>
+    strokes.map((s) => s.map(([x, y]) => [x0 + x * (x1 - x0), y0 + y * (y1 - y0)]));
+
+  // Point + direction at distance d along a polyline (also returns the partial path)
+  function walk(s, d) {
+    const out = [s[0]];
+    let acc = 0;
+    for (let i = 1; i < s.length; i++) {
+      const a = s[i - 1], b = s[i], l = dist(a, b);
+      if (acc + l >= d && l > 0) {
+        const t = (d - acc) / l;
+        const p = [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+        out.push(p);
+        return { pts: out, p, dir: [(b[0] - a[0]) / l, (b[1] - a[1]) / l] };
+      }
+      acc += l;
+      out.push(b);
+    }
+    const n = s.length, a = s[Math.max(0, n - 2)], b = s[n - 1], l = dist(a, b) || 1;
+    return { pts: out, p: b, dir: [(b[0] - a[0]) / l, (b[1] - a[1]) / l] };
+  }
+
+  function resample(s, step) {
+    if (s.length < 2) return s.slice();
+    const out = [s[0]];
+    let need = step;
+    for (let i = 1; i < s.length; i++) {
+      let a = s[i - 1];
+      const b = s[i];
+      let l = dist(a, b);
+      while (l >= need) {
+        const t = need / l;
+        a = [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+        out.push(a);
+        l -= need;
+        need = step;
+      }
+      need -= l;
+    }
+    out.push(s[s.length - 1]);
+    return out;
+  }
+  function bbox(pts) {
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const [x, y] of pts) { if (x < x0) x0 = x; if (y < y0) y0 = y; if (x > x1) x1 = x; if (y > y1) y1 = y; }
+    return { w: x1 - x0, h: y1 - y0, cx: (x0 + x1) / 2, cy: (y0 + y1) / 2 };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Hangul stroke data (tight 0..1 boxes, in correct stroke order & direction)
+  // ---------------------------------------------------------------------------
+  const J_STROKES = [
+    join([[0.1, 0.1], [0.85, 0.1]], quad([0.85, 0.1], [0.55, 0.55], [0.06, 0.96])),
+    quad([0.53, 0.5], [0.68, 0.82], [0.96, 0.96]),
+  ];
+
+  const JAMO = {
+    // 자음
+    'ㄱ': { name: '기역', ex: ['기차', '🚂'], s: [[[0.08, 0.12], [0.9, 0.12], [0.9, 0.94]]] },
+    'ㄴ': { name: '니은', ex: ['나비', '🦋'], s: [[[0.12, 0.06], [0.12, 0.9], [0.94, 0.9]]] },
+    'ㄷ': { name: '디귿', ex: ['도토리', '🌰'], s: [[[0.12, 0.1], [0.9, 0.1]], [[0.12, 0.1], [0.12, 0.9], [0.94, 0.9]]] },
+    'ㄹ': { name: '리을', ex: ['라면', '🍜'], s: [[[0.1, 0.08], [0.88, 0.08], [0.88, 0.48]], [[0.12, 0.48], [0.88, 0.48]], [[0.12, 0.48], [0.12, 0.92], [0.94, 0.92]]] },
+    'ㅁ': { name: '미음', ex: ['모자', '🧢'], s: [[[0.12, 0.08], [0.12, 0.92]], [[0.12, 0.08], [0.88, 0.08], [0.88, 0.92]], [[0.12, 0.92], [0.88, 0.92]]] },
+    'ㅂ': { name: '비읍', ex: ['바나나', '🍌'], s: [[[0.14, 0.04], [0.14, 0.94]], [[0.86, 0.04], [0.86, 0.94]], [[0.14, 0.48], [0.86, 0.48]], [[0.14, 0.94], [0.86, 0.94]]] },
+    'ㅅ': { name: '시옷', ex: ['사자', '🦁'], s: [quad([0.52, 0.04], [0.42, 0.62], [0.04, 0.96]), quad([0.4, 0.46], [0.62, 0.82], [0.96, 0.96])] },
+    'ㅇ': { name: '이응', ex: ['오리', '🦆'], s: [ellipse(0.5, 0.5, 0.46, 0.46)] },
+    'ㅈ': { name: '지읒', ex: ['자동차', '🚗'], s: J_STROKES },
+    'ㅊ': { name: '치읓', ex: ['치즈', '🧀'], s: [[[0.5, 0], [0.5, 0.16]], ...mapRect(J_STROKES, [0, 0.26, 1, 1])] },
+    'ㅋ': { name: '키읔', ex: ['코끼리', '🐘'], s: [[[0.08, 0.1], [0.9, 0.1], [0.9, 0.94]], [[0.1, 0.5], [0.9, 0.5]]] },
+    'ㅌ': { name: '티읕', ex: ['토끼', '🐰'], s: [[[0.12, 0.08], [0.9, 0.08]], [[0.12, 0.48], [0.88, 0.48]], [[0.12, 0.08], [0.12, 0.92], [0.94, 0.92]]] },
+    'ㅍ': { name: '피읖', ex: ['포도', '🍇'], s: [[[0.04, 0.1], [0.96, 0.1]], [[0.3, 0.1], [0.34, 0.9]], [[0.7, 0.1], [0.66, 0.9]], [[0.04, 0.9], [0.96, 0.9]]] },
+    'ㅎ': { name: '히읗', ex: ['하마', '🦛'], s: [[[0.5, 0], [0.5, 0.14]], [[0.1, 0.26], [0.9, 0.26]], ellipse(0.5, 0.65, 0.3, 0.3)] },
+    // 모음 (v: V = 세로 모음, H = 가로 모음)
+    'ㅏ': { name: '아', v: 'V', ex: ['아기', '👶'], s: [[[0.3, 0], [0.3, 1]], [[0.3, 0.5], [0.96, 0.5]]] },
+    'ㅑ': { name: '야', v: 'V', ex: ['야구', '⚾'], s: [[[0.3, 0], [0.3, 1]], [[0.3, 0.36], [0.96, 0.36]], [[0.3, 0.64], [0.96, 0.64]]] },
+    'ㅓ': { name: '어', v: 'V', ex: ['어묵', '🍢'], s: [[[0.04, 0.5], [0.7, 0.5]], [[0.7, 0], [0.7, 1]]] },
+    'ㅕ': { name: '여', v: 'V', ex: ['여우', '🦊'], s: [[[0.04, 0.36], [0.7, 0.36]], [[0.04, 0.64], [0.7, 0.64]], [[0.7, 0], [0.7, 1]]] },
+    'ㅗ': { name: '오', v: 'H', ex: ['오이', '🥒'], s: [[[0.5, 0.05], [0.5, 0.7]], [[0, 0.7], [1, 0.7]]] },
+    'ㅛ': { name: '요', v: 'H', ex: ['요리', '🍳'], s: [[[0.34, 0.05], [0.34, 0.7]], [[0.66, 0.05], [0.66, 0.7]], [[0, 0.7], [1, 0.7]]] },
+    'ㅜ': { name: '우', v: 'H', ex: ['우유', '🥛'], s: [[[0, 0.3], [1, 0.3]], [[0.5, 0.3], [0.5, 0.95]]] },
+    'ㅠ': { name: '유', v: 'H', ex: ['유령', '👻'], s: [[[0, 0.3], [1, 0.3]], [[0.34, 0.3], [0.34, 0.95]], [[0.66, 0.3], [0.66, 0.95]]] },
+    'ㅡ': { name: '으', v: 'H', ex: ['으르렁', '🐯'], s: [[[0, 0.5], [1, 0.5]]] },
+    'ㅣ': { name: '이', v: 'V', ex: ['이빨', '🦷'], s: [[[0.5, 0], [0.5, 1]]] },
+  };
+
+  // Where a single jamo sits on the full practice square
+  const BOX = { C: [0.22, 0.22, 0.78, 0.78], V: [0.34, 0.14, 0.66, 0.86], H: [0.14, 0.28, 0.86, 0.72] };
+
+  // Syllable composition (초성 + 중성 + 종성)
+  const CHO = ['ㄱ','ㄲ','ㄴ','ㄷ','ㄸ','ㄹ','ㅁ','ㅂ','ㅃ','ㅅ','ㅆ','ㅇ','ㅈ','ㅉ','ㅊ','ㅋ','ㅌ','ㅍ','ㅎ'];
+  const JUNG = ['ㅏ','ㅐ','ㅑ','ㅒ','ㅓ','ㅔ','ㅕ','ㅖ','ㅗ','ㅘ','ㅙ','ㅚ','ㅛ','ㅜ','ㅝ','ㅞ','ㅟ','ㅠ','ㅡ','ㅢ','ㅣ'];
+  const JONG = ['','ㄱ','ㄲ','ㄳ','ㄴ','ㄵ','ㄶ','ㄷ','ㄹ','ㄺ','ㄻ','ㄼ','ㄽ','ㄾ','ㄿ','ㅀ','ㅁ','ㅂ','ㅄ','ㅅ','ㅆ','ㅇ','ㅈ','ㅊ','ㅋ','ㅌ','ㅍ','ㅎ'];
+  const LAYOUT = {
+    V:  { C: [0.14, 0.24, 0.5, 0.76], V: [0.58, 0.1, 0.82, 0.9] },
+    VF: { C: [0.16, 0.1, 0.5, 0.44], V: [0.58, 0.04, 0.8, 0.54], F: [0.24, 0.6, 0.76, 0.9] },
+    H:  { C: [0.3, 0.1, 0.7, 0.46], V: [0.12, 0.5, 0.88, 0.86] },
+    HF: { C: [0.32, 0.05, 0.68, 0.3], V: [0.14, 0.33, 0.86, 0.56], F: [0.28, 0.62, 0.72, 0.92] },
+  };
+  function decompose(ch) {
+    const c = ch.charCodeAt(0) - 0xac00;
+    if (c < 0 || c > 11171) return null;
+    return [CHO[Math.floor(c / 588)], JUNG[Math.floor((c % 588) / 28)], JONG[c % 28]];
+  }
+  function syllableStrokes(ch) {
+    const d = decompose(ch);
+    if (!d) return [];
+    const [c, v, f] = d;
+    if (!JAMO[c] || !JAMO[v] || (f && !JAMO[f])) return [];
+    const lay = LAYOUT[JAMO[v].v + (f ? 'F' : '')];
+    return [...mapRect(JAMO[c].s, lay.C), ...mapRect(JAMO[v].s, lay.V), ...(f ? mapRect(JAMO[f].s, lay.F) : [])];
+  }
+
+  // ---------------------------------------------------------------------------
+  // Curriculum
+  // ---------------------------------------------------------------------------
+  const WAVE = Array.from({ length: 61 }, (_, i) => { const t = i / 60; return [0.12 + 0.76 * t, 0.5 - 0.13 * Math.sin(t * Math.PI * 3)]; });
+  const LINES = [
+    { id: 'h', label: '가로선', emoji: '🐛', s: [[[0.15, 0.5], [0.85, 0.5]]], say: '가로선! 왼쪽에서 오른쪽으로 그어 볼까?' },
+    { id: 'v', label: '세로선', emoji: '🌧️', s: [[[0.5, 0.15], [0.5, 0.85]]], say: '세로선! 위에서 아래로 그어 볼까?' },
+    { id: 'd1', label: '미끄럼틀', emoji: '🛝', s: [[[0.22, 0.22], [0.78, 0.78]]], say: '미끄럼틀처럼 비스듬히 내려가요.' },
+    { id: 'd2', label: '반대 미끄럼틀', emoji: '🪁', s: [[[0.78, 0.22], [0.22, 0.78]]], say: '이번엔 오른쪽 위에서 비스듬히 내려가요.' },
+    { id: 'cross', label: '십자', emoji: '➕', s: [[[0.2, 0.5], [0.8, 0.5]], [[0.5, 0.2], [0.5, 0.8]]], say: '가로로 한 번, 세로로 한 번!' },
+    { id: 'm', label: '산', emoji: '⛰️', s: [[[0.15, 0.74], [0.5, 0.26], [0.85, 0.74]]], say: '산 모양! 올라갔다가 내려와요.' },
+    { id: 'z', label: '번개', emoji: '⚡', s: [[[0.12, 0.62], [0.31, 0.38], [0.5, 0.62], [0.69, 0.38], [0.88, 0.62]]], say: '번개처럼 지그재그로 그어 볼까?' },
+    { id: 'w', label: '물결', emoji: '🌊', s: [WAVE], say: '물결처럼 구불구불 그어 볼까?' },
+    { id: 'o', label: '동그라미', emoji: '🍩', s: [ellipse(0.5, 0.5, 0.3, 0.3)], say: '동그라미! 위에서 시작해서 한 바퀴 돌아요.' },
+  ];
+
+  const CONSONANTS = ['ㄱ','ㄴ','ㄷ','ㄹ','ㅁ','ㅂ','ㅅ','ㅇ','ㅈ','ㅊ','ㅋ','ㅌ','ㅍ','ㅎ'];
+  const VOWELS = ['ㅏ','ㅑ','ㅓ','ㅕ','ㅗ','ㅛ','ㅜ','ㅠ','ㅡ','ㅣ'];
+  const WORDS = [
+    ['아기', '👶'], ['오리', '🦆'], ['우유', '🥛'], ['나비', '🦋'], ['바다', '🌊'], ['하마', '🦛'],
+    ['사자', '🦁'], ['포도', '🍇'], ['기차', '🚂'], ['모자', '🧢'], ['나무', '🌳'], ['피자', '🍕'],
+    ['고구마', '🍠'], ['바나나', '🍌'], ['곰', '🐻'], ['공', '⚽'], ['엄마', '👩'], ['별', '⭐'],
+  ];
+
+  function jamoItem(ch) {
+    const j = JAMO[ch];
+    return {
+      key: 'j:' + ch, kind: j.v ? 'vowel' : 'consonant', glyph: ch, name: j.name,
+      emoji: j.ex[1], word: j.ex[0],
+      strokes: mapRect(j.s, BOX[j.v || 'C']),
+      // Commas give the TTS engine natural, child-friendly pauses: "기역! 기차의, 기!"
+      speak: `${j.name}! ${j.ex[0]}의, ${j.ex[0][0]}!`,
+    };
+  }
+  function syllableItem(ch, word, emoji) {
+    return { key: 's:' + ch, kind: 'syllable', glyph: ch, name: ch, emoji, word, strokes: syllableStrokes(ch), speak: `${word}의, '${ch}'!` };
+  }
+
+  const ITEMS = {
+    lines: LINES.map((l) => ({ key: 'l:' + l.id, kind: 'line', name: l.label, emoji: l.emoji, word: l.label, strokes: l.s, speak: l.say })),
+    consonants: CONSONANTS.map(jamoItem),
+    vowels: VOWELS.map(jamoItem),
+    words: WORDS.map(([w, e]) => ({ key: 'w:' + w, kind: 'word', word: w, emoji: e, syllables: [...w].map((ch) => syllableItem(ch, w, e)) })),
+  };
+  const SYLLABLES = (() => {
+    const seen = new Set(), out = [];
+    ITEMS.words.forEach((w) => w.syllables.forEach((s) => { if (!seen.has(s.key)) { seen.add(s.key); out.push(s); } }));
+    return out;
+  })();
+  const PCATS = [
+    { id: 'lines', label: '선', items: ITEMS.lines },
+    { id: 'consonants', label: '자음', items: ITEMS.consonants },
+    { id: 'vowels', label: '모음', items: ITEMS.vowels },
+    { id: 'syllables', label: '글자', items: SYLLABLES },
+  ];
+
+  const TABS = [
+    { id: 'lines', label: '선 긋기', icon: 'Spline', color: '#38BDF8', shadow: '#0EA5E9' },
+    { id: 'consonants', label: '자음', glyph: 'ㄱ', color: '#FB923C', shadow: '#EA580C' },
+    { id: 'vowels', label: '모음', glyph: 'ㅏ', color: '#34D399', shadow: '#059669' },
+    { id: 'words', label: '낱말', glyph: '가', color: '#F472B6', shadow: '#DB2777' },
+    { id: 'practice', label: '무한 반복', icon: 'Infinity', color: '#A78BFA', shadow: '#7C3AED' },
+  ];
+
+  const STROKE_COLORS = ['#F97316', '#3B82F6', '#10B981', '#A855F7', '#EC4899', '#EAB308'];
+  const colorOf = (i) => STROKE_COLORS[i % STROKE_COLORS.length];
+  const CRAYONS = ['#2563EB', '#EF4444', '#F59E0B', '#10B981', '#A855F7'];
+  const NUM_KO = ['하나', '둘', '셋', '넷', '다섯', '여섯', '일곱', '여덟', '아홉', '열'];
+  // Spoken praise: plain words only — sound-effect words (반짝반짝, 짝짝짝) are played as real sounds instead.
+  const PRAISE = ['참 잘했어요!', '우와, 멋지다!', '정말 예쁘게 썼네!', '최고야!'];
+
+  // ---------------------------------------------------------------------------
+  // Handwriting check: does the child's ink follow the guide strokes?
+  // ---------------------------------------------------------------------------
+  function evaluate(guide, user, { free = false, lenient = false } = {}) {
+    const fail = { pass: false, coveredIdx: [], coverage: 0 };
+    if (!user.length || !guide.length) return fail;
+    let up = [];
+    user.forEach((s) => { up = up.concat(resample(s.pts, 0.008)); });
+    if (up.length < 4) return fail;
+    const gs = guide.map((s) => resample(s, 0.015));
+    const all = [].concat(...gs);
+
+    if (free) {
+      // Free mode: compare shape only (child can write anywhere, any size)
+      const ub = bbox(up), gb = bbox(all);
+      const uMax = Math.max(ub.w, ub.h), gMax = Math.max(gb.w, gb.h);
+      if (uMax < 0.12) return fail;
+      const k = gMax / uMax;
+      up = up.map(([x, y]) => [gb.cx + (x - ub.cx) * k, gb.cy + (y - ub.cy) * k]);
+    }
+    const tc = free ? 0.1 : 0.085, tp = free ? 0.13 : 0.12;
+    const tc2 = tc * tc, tp2 = tp * tp;
+    const near = (p, arr, t2) => {
+      for (let i = 0; i < arr.length; i++) {
+        const dx = p[0] - arr[i][0], dy = p[1] - arr[i][1];
+        if (dx * dx + dy * dy <= t2) return true;
+      }
+      return false;
+    };
+    let hit = 0, tot = 0;
+    const per = gs.map((g) => {
+      let h = 0;
+      for (const p of g) if (near(p, up, tc2)) h++;
+      hit += h; tot += g.length;
+      return h / g.length;
+    });
+    let ph = 0;
+    for (const p of up) if (near(p, all, tp2)) ph++;
+    const coverage = hit / tot, precision = ph / up.length;
+    const th = lenient ? { c: 0.62, s: 0.35, p: 0.45 } : { c: 0.8, s: 0.55, p: 0.6 };
+    return {
+      pass: coverage >= th.c && Math.min(...per) >= th.s && precision >= th.p,
+      coverage, precision, per,
+      coveredIdx: per.map((v, i) => (v >= 0.75 ? i : -1)).filter((i) => i >= 0),
+    };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Canvas drawing: 4-quadrant grid + tracing guide (numbers, arrows)
+  // ---------------------------------------------------------------------------
+  function arrow(c, x, y, dir, a, color) {
+    c.save();
+    c.translate(x, y);
+    c.rotate(Math.atan2(dir[1], dir[0]));
+    c.beginPath();
+    c.moveTo(a, 0); c.lineTo(-a * 0.7, a * 0.78); c.lineTo(-a * 0.32, 0); c.lineTo(-a * 0.7, -a * 0.78);
+    c.closePath();
+    c.lineJoin = 'round';
+    c.lineWidth = Math.max(2, a * 0.22);
+    c.strokeStyle = '#fff';
+    c.stroke();
+    c.fillStyle = color;
+    c.fill();
+    c.restore();
+  }
+
+  function drawGuide(c, S, item, { showGrid, showGuide, covered }) {
+    c.clearRect(0, 0, S, S);
+    if (showGrid) {
+      c.save();
+      c.strokeStyle = 'rgba(248,113,113,0.45)';
+      c.lineWidth = Math.max(1.5, S * 0.0035);
+      c.setLineDash([S * 0.014, S * 0.014]);
+      c.beginPath();
+      c.moveTo(S / 2, S * 0.02); c.lineTo(S / 2, S * 0.98);
+      c.moveTo(S * 0.02, S / 2); c.lineTo(S * 0.98, S / 2);
+      c.stroke();
+      c.setLineDash([]);
+      // quadrant numbers 1·2 / 3·4 (very faint)
+      c.fillStyle = 'rgba(148,163,184,0.45)';
+      c.font = `${Math.round(S * 0.032)}px Jua, sans-serif`;
+      c.textAlign = 'center'; c.textBaseline = 'middle';
+      const m = S * 0.045;
+      [[m, m], [S - m, m], [m, S - m], [S - m, S - m]].forEach(([x, y], i) => c.fillText(String(i + 1), x, y));
+      c.restore();
+    }
+    if (!showGuide || !item) return;
+
+    const list = item.strokes;
+    const trace = (s) => { c.beginPath(); s.forEach((p, i) => (i ? c.lineTo(p[0] * S, p[1] * S) : c.moveTo(p[0] * S, p[1] * S))); };
+    c.save();
+    c.lineCap = 'round'; c.lineJoin = 'round';
+    // 1) soft wide tracks
+    list.forEach((s, i) => {
+      trace(s);
+      c.lineWidth = S * 0.078;
+      c.strokeStyle = covered.has(i) ? 'rgba(187,247,208,0.95)' : 'rgba(226,232,240,0.95)';
+      c.stroke();
+    });
+    // 2) dotted center lines
+    list.forEach((s, i) => {
+      trace(s);
+      c.setLineDash([0.01, S * 0.026]);
+      c.lineWidth = S * 0.012;
+      c.strokeStyle = hexA(colorOf(i), covered.has(i) ? 0.3 : 0.8);
+      c.stroke();
+    });
+    c.setLineDash([]);
+    // 3) direction arrows
+    list.forEach((s, i) => {
+      const L = pathLen(s);
+      const fr = L < 0.9 ? [0.55] : [0.3, 0.72];
+      fr.forEach((f) => {
+        const { p, dir } = walk(s, L * f);
+        arrow(c, p[0] * S, p[1] * S, dir, S * 0.03, covered.has(i) ? '#86EFAC' : colorOf(i));
+      });
+    });
+    // 4) start dots + numbered badges
+    const r = S * 0.036;
+    const placed = [];
+    // Badges should sit "behind" each stroke's start, without covering any guide track or another badge.
+    const trackPts = [].concat(...list.map((s) => resample(s, 0.02))).map((p) => [p[0] * S, p[1] * S]);
+    const clearOf = (q) => trackPts.reduce((m, p) => Math.min(m, Math.hypot(q[0] - p[0], q[1] - p[1])), Infinity);
+    const enough = r + S * 0.045; // badge radius + half the track width + a little air
+    const ANGLES = [0, 45, -45, 90, -90, 135, -135].map((a) => (a * Math.PI) / 180);
+    list.forEach((s, i) => {
+      const sx = s[0][0] * S, sy = s[0][1] * S;
+      const { dir } = walk(s, 0.0001);
+      c.beginPath(); c.arc(sx, sy, S * 0.014, 0, Math.PI * 2);
+      c.fillStyle = colorOf(i); c.fill();
+      const back = Math.atan2(-dir[1], -dir[0]);
+      const cand = [];
+      [1.9, 2.8].forEach((k) => ANGLES.forEach((a) => cand.push([
+        clamp(sx + Math.cos(back + a) * r * k, r + 2, S - r - 2),
+        clamp(sy + Math.sin(back + a) * r * k, r + 2, S - r - 2),
+      ])));
+      let pos = cand[0], best = -Infinity;
+      cand.forEach((q, order) => {
+        if (!placed.every((o) => Math.hypot(q[0] - o[0], q[1] - o[1]) > r * 2.15)) return;
+        const score = Math.min(clearOf(q), enough) - order * 0.01; // once clear, earlier (more natural) spots win
+        if (score > best) { best = score; pos = q; }
+      });
+      placed.push(pos);
+      c.beginPath(); c.arc(pos[0], pos[1], r, 0, Math.PI * 2);
+      c.fillStyle = covered.has(i) ? '#22C55E' : colorOf(i);
+      c.fill();
+      c.lineWidth = Math.max(2, S * 0.006); c.strokeStyle = '#fff'; c.stroke();
+      c.fillStyle = '#fff';
+      c.font = `${Math.round(r * 1.3)}px Jua, sans-serif`;
+      c.textAlign = 'center'; c.textBaseline = 'middle';
+      c.fillText(covered.has(i) ? '✓' : String(i + 1), pos[0], pos[1] + r * 0.08);
+    });
+    c.restore();
+  }
+
+  // Smooth ink: quadratic curves through midpoints
+  function inkSeg(c, pts, i, S) {
+    const p2 = pts[i], p1 = pts[i - 1], p0 = pts[i - 2] || p1;
+    c.beginPath();
+    c.moveTo(((p0[0] + p1[0]) / 2) * S, ((p0[1] + p1[1]) / 2) * S);
+    c.quadraticCurveTo(p1[0] * S, p1[1] * S, ((p1[0] + p2[0]) / 2) * S, ((p1[1] + p2[1]) / 2) * S);
+    c.stroke();
+  }
+  function inkDot(c, p, S) { c.beginPath(); c.arc(p[0] * S, p[1] * S, c.lineWidth / 2, 0, Math.PI * 2); c.fill(); }
+  function inkTail(c, pts, S) {
+    const n = pts.length;
+    if (n < 2) return;
+    const a = pts[n - 2], b = pts[n - 1];
+    c.beginPath();
+    c.moveTo(((a[0] + b[0]) / 2) * S, ((a[1] + b[1]) / 2) * S);
+    c.lineTo(b[0] * S, b[1] * S);
+    c.stroke();
+  }
+
+  function tween(dur, fn) {
+    return new Promise((resolve) => {
+      const t0 = performance.now();
+      const step = (now) => {
+        const t = Math.min(1, (now - t0) / dur);
+        if (fn(t) === false) return resolve(false);
+        if (t >= 1) return resolve(true);
+        requestAnimationFrame(step);
+      };
+      requestAnimationFrame(step);
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // <Board/>: layered canvases (grid/guide → demo/fx → ink)
+  // ---------------------------------------------------------------------------
+  const BORDER = 6;
+  const Board = forwardRef(function Board(props, ref) {
+    const P = useRef(props);
+    P.current = props;
+    const holder = useRef(null), pad = useRef(null);
+    const gC = useRef(null), fC = useRef(null), iC = useRef(null);
+    const [S, setS] = useState(0);
+    const SR = useRef(0);
+    const strokes = useRef([]);
+    const covered = useRef(new Set());
+    const demoTok = useRef(0);
+    const wipeT = useRef(0);
+    const [poof, setPoof] = useState(0);
+
+    const ctxOf = (r) => (r.current ? r.current.getContext('2d') : null);
+
+    function renderGuide() {
+      const c = ctxOf(gC);
+      if (!c || !SR.current) return;
+      const p = P.current;
+      drawGuide(c, SR.current, p.item, { showGrid: p.showGrid, showGuide: p.showGuide, covered: covered.current });
+    }
+    function inkStyle(c, color) {
+      c.strokeStyle = color; c.fillStyle = color;
+      c.lineWidth = SR.current * 0.042;
+      c.lineCap = 'round'; c.lineJoin = 'round';
+    }
+    function renderInk() {
+      const c = ctxOf(iC), s = SR.current;
+      if (!c || !s) return;
+      c.clearRect(0, 0, s, s);
+      strokes.current.forEach((st) => {
+        inkStyle(c, st.color);
+        inkDot(c, st.pts[0], s);
+        for (let i = 1; i < st.pts.length; i++) inkSeg(c, st.pts, i, s);
+        inkTail(c, st.pts, s);
+      });
+    }
+    function stopDemo() {
+      demoTok.current++;
+      clearTimeout(wipeT.current);
+      const f = fC.current, c = ctxOf(fC);
+      if (f) f.classList.remove('wipe');
+      if (c) c.clearRect(0, 0, SR.current, SR.current);
+    }
+    function afterStroke() {
+      const p = P.current;
+      const free = !p.showGuide;
+      const res = evaluate(p.item.strokes, strokes.current, { free });
+      if (!free) {
+        const fresh = res.coveredIdx.filter((i) => !covered.current.has(i));
+        if (fresh.length) {
+          fresh.forEach((i) => covered.current.add(i));
+          renderGuide();
+          if (!res.pass) Sfx.tick();
+        }
+      }
+      if (res.pass && p.onSuccess) p.onSuccess();
+    }
+
+    // Measure available space → square canvas size
+    useEffect(() => {
+      const el = holder.current;
+      const measure = (w, h) => setS(Math.max(220, Math.floor(Math.min(w - 2 * BORDER - 8, h - 2 * BORDER - 40))));
+      const ro = new ResizeObserver((entries) => {
+        const r = entries[0].contentRect;
+        measure(r.width, r.height);
+      });
+      ro.observe(el);
+      return () => ro.disconnect();
+    }, []);
+
+    // (Re)configure canvases for the current size + device pixel ratio
+    useLayoutEffect(() => {
+      if (!S) return;
+      SR.current = S;
+      const dpr = Math.min(window.devicePixelRatio || 1, 3);
+      [gC, fC, iC].forEach((r) => {
+        const cv = r.current;
+        cv.width = Math.round(S * dpr); cv.height = Math.round(S * dpr);
+        cv.style.width = S + 'px'; cv.style.height = S + 'px';
+        cv.getContext('2d').setTransform(dpr, 0, 0, dpr, 0, 0);
+      });
+      renderGuide();
+      renderInk();
+    }, [S]);
+
+    // New page / item → wipe everything
+    useEffect(() => {
+      stopDemo();
+      strokes.current = [];
+      covered.current = new Set();
+      renderInk();
+      renderGuide();
+    }, [props.session]);
+
+    useEffect(() => { renderGuide(); }, [props.item, props.showGrid, props.showGuide]);
+
+    // Redraw guide once the Jua webfont is ready (badge numbers)
+    useEffect(() => {
+      if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => renderGuide());
+    }, []);
+
+    // Pointer input (finger + Apple Pencil, simple palm rejection)
+    useEffect(() => {
+      const el = pad.current;
+      let active = null;
+      let lastPen = -1e9;
+      const toU = (e) => {
+        const r = iC.current.getBoundingClientRect();
+        return [(e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height];
+      };
+      const down = (e) => {
+        e.preventDefault();
+        if (P.current.locked) return;
+        const now = performance.now();
+        if (e.pointerType === 'pen') lastPen = now;
+        else if (e.pointerType === 'touch' && now - lastPen < 1500) return; // palm while using Pencil
+        if (active) {
+          if (e.pointerType === 'pen' && active.type !== 'pen') { strokes.current.pop(); renderInk(); }
+          else return; // ignore extra fingers
+        }
+        stopDemo();
+        active = { id: e.pointerId, type: e.pointerType };
+        try { el.setPointerCapture(e.pointerId); } catch (err) {}
+        const st = { color: P.current.color, pts: [toU(e)] };
+        strokes.current.push(st);
+        const c = ctxOf(iC);
+        inkStyle(c, st.color);
+        inkDot(c, st.pts[0], SR.current);
+      };
+      const move = (e) => {
+        if (!active || e.pointerId !== active.id) return;
+        e.preventDefault();
+        if (active.type === 'pen') lastPen = performance.now();
+        const st = strokes.current[strokes.current.length - 1];
+        if (!st) return;
+        const c = ctxOf(iC);
+        inkStyle(c, st.color);
+        const co = e.getCoalescedEvents ? e.getCoalescedEvents() : null;
+        const list = co && co.length ? co : [e];
+        for (const ev of list) {
+          const p = toU(ev);
+          const q = st.pts[st.pts.length - 1];
+          if (dist(p, q) < 0.0025) continue;
+          st.pts.push(p);
+          inkSeg(c, st.pts, st.pts.length - 1, SR.current);
+        }
+      };
+      const up = (e) => {
+        if (!active || e.pointerId !== active.id) return;
+        if (active.type === 'pen') lastPen = performance.now();
+        active = null;
+        const st = strokes.current[strokes.current.length - 1];
+        if (st) {
+          const c = ctxOf(iC);
+          inkStyle(c, st.color);
+          inkTail(c, st.pts, SR.current);
+        }
+        afterStroke();
+      };
+      const block = (e) => e.preventDefault();
+      el.addEventListener('pointerdown', down);
+      el.addEventListener('pointermove', move);
+      el.addEventListener('pointerup', up);
+      el.addEventListener('pointercancel', up);
+      el.addEventListener('touchstart', block, { passive: false });
+      el.addEventListener('touchmove', block, { passive: false });
+      return () => {
+        el.removeEventListener('pointerdown', down);
+        el.removeEventListener('pointermove', move);
+        el.removeEventListener('pointerup', up);
+        el.removeEventListener('pointercancel', up);
+        el.removeEventListener('touchstart', block);
+        el.removeEventListener('touchmove', block);
+      };
+    }, []);
+
+    useImperativeHandle(ref, () => ({
+      hasInk: () => strokes.current.length > 0,
+      check: () => evaluate(P.current.item.strokes, strokes.current, { free: !P.current.showGuide, lenient: true }),
+      clear(animated) {
+        stopDemo();
+        const s = SR.current;
+        if (animated && strokes.current.length) {
+          const f = fC.current, c = ctxOf(fC);
+          c.drawImage(iC.current, 0, 0, s, s);
+          void f.offsetWidth;
+          f.classList.add('wipe');
+          wipeT.current = setTimeout(() => { f.classList.remove('wipe'); c.clearRect(0, 0, SR.current, SR.current); }, 480);
+        }
+        if (animated) setPoof((p) => p + 1);
+        strokes.current = [];
+        covered.current = new Set();
+        renderInk();
+        renderGuide();
+      },
+      async demo() {
+        stopDemo();
+        const tok = demoTok.current;
+        const c = ctxOf(fC), s = SR.current, it = P.current.item;
+        if (!c || !s || !it) return;
+        const list = it.strokes, lens = list.map(pathLen);
+        const drawPart = (i, d) => {
+          const { pts, p } = walk(list[i], d);
+          c.beginPath();
+          pts.forEach((q, k) => (k ? c.lineTo(q[0] * s, q[1] * s) : c.moveTo(q[0] * s, q[1] * s)));
+          c.strokeStyle = hexA(colorOf(i), 0.85);
+          c.lineWidth = s * 0.046; c.lineCap = 'round'; c.lineJoin = 'round';
+          c.stroke();
+          return p;
+        };
+        for (let i = 0; i < list.length; i++) {
+          if (tok !== demoTok.current) return;
+          Speech.say(NUM_KO[i] || String(i + 1));
+          const dur = Math.max(700, (lens[i] / 0.5) * 1000);
+          const ok = await tween(dur, (t) => {
+            if (tok !== demoTok.current) return false;
+            c.clearRect(0, 0, s, s);
+            for (let j = 0; j < i; j++) drawPart(j, lens[j]);
+            const head = drawPart(i, lens[i] * easeInOut(t));
+            c.beginPath(); c.arc(head[0] * s, head[1] * s, s * 0.03, 0, Math.PI * 2);
+            c.fillStyle = '#fff'; c.fill();
+            c.lineWidth = s * 0.012; c.strokeStyle = colorOf(i); c.stroke();
+            return true;
+          });
+          if (!ok) return;
+          await sleep(350);
+        }
+        if (tok !== demoTok.current) return;
+        c.clearRect(0, 0, s, s);
+        for (let j = 0; j < list.length; j++) drawPart(j, lens[j]);
+        await sleep(1100);
+        if (tok === demoTok.current) c.clearRect(0, 0, s, s);
+      },
+    }));
+
+    const bubbles = useMemo(() => {
+      if (!poof) return [];
+      return Array.from({ length: 12 }, (_, i) => {
+        const a = (i / 12) * Math.PI * 2 + Math.random() * 0.4;
+        const r = 60 + Math.random() * 120;
+        return {
+          k: poof + '-' + i,
+          size: 18 + Math.random() * 34,
+          left: 35 + Math.random() * 30 + '%',
+          top: 35 + Math.random() * 30 + '%',
+          dx: Math.cos(a) * r + 'px',
+          dy: Math.sin(a) * r - 60 + 'px',
+          delay: Math.random() * 0.15 + 's',
+        };
+      });
+    }, [poof]);
+
+    const outer = S + 2 * BORDER;
+    return html`
+      <div ref=${holder} className="board-area">
+        <div className="relative" style=${{ width: outer, height: outer }}>
+          <div ref=${pad} className="pad absolute inset-0 bg-white overflow-hidden"
+               style=${{ borderRadius: 34, border: `${BORDER}px solid #FED7AA`, boxShadow: '0 10px 0 #FDBA74, 0 22px 44px rgba(251,146,60,.22)' }}
+               aria-label="글씨 쓰는 곳">
+            <canvas ref=${gC}></canvas>
+            <canvas ref=${fC}></canvas>
+            <canvas ref=${iC}></canvas>
+          </div>
+          ${bubbles.map((b) => html`<span key=${b.k} className="bubble"
+              style=${{ width: b.size, height: b.size, left: b.left, top: b.top, '--dx': b.dx, '--dy': b.dy, animationDelay: b.delay }}></span>`)}
+          ${props.children}
+        </div>
+      </div>`;
+  });
+
+  // ---------------------------------------------------------------------------
+  // Presentational pieces
+  // ---------------------------------------------------------------------------
+  const MiniSvg = ({ strokes, size = 52, color = '#64748B', width = 0.075 }) => html`
+    <svg viewBox="0 0 1 1" width=${size} height=${size} aria-hidden="true">
+      ${strokes.map((s, i) => html`<polyline key=${i} points=${s.map((p) => p.join(',')).join(' ')}
+        fill="none" stroke=${color} strokeWidth=${width} strokeLinecap="round" strokeLinejoin="round" />`)}
+    </svg>`;
+
+  const BigBtn = ({ onClick, bg, icon, children, pulse, label, disabled }) => html`
+    <button onClick=${onClick} disabled=${disabled} aria-label=${label || (typeof children === 'string' ? children : '')}
+      className=${`btn3d ${pulse ? 'wiggle' : ''} min-h-[66px] rounded-3xl px-3 flex items-center justify-center gap-2 text-white text-[22px] leading-none`}
+      style=${{ background: bg }}>
+      ${icon && html`<${Icon} name=${icon} size=${28} />`}
+      <span className="whitespace-nowrap">${children}</span>
+    </button>`;
+
+  const Chip = forwardRef(function Chip({ item, active, count, onClick }, ref) {
+    const base = 'relative flex-none rounded-3xl border-4 flex flex-col items-center justify-center transition-transform duration-150 ';
+    const look = active ? 'bg-orange-50 border-orange-400 scale-105' : 'bg-white border-orange-100';
+    const w = item.kind === 'word' ? 'min-w-[112px] px-3' : 'w-[88px]';
+    let body;
+    if (item.kind === 'line') body = html`<${Frag}><${MiniSvg} strokes=${item.strokes} size=${48} color=${active ? '#F97316' : '#64748B'} /><span className="text-[14px] leading-none mt-0.5 text-slate-500">${item.name}</span><//>`;
+    else if (item.kind === 'word') body = html`<${Frag}><span className="text-[34px] leading-none">${item.emoji}</span><span className="text-[22px] leading-none mt-1">${item.word}</span><//>`;
+    else body = html`<span className="text-[48px] leading-none" style=${{ color: active ? '#EA580C' : '#4A3F5C' }}>${item.glyph}</span>`;
+    return html`
+      <button ref=${ref} onClick=${onClick} className=${base + look + ' ' + w + ' h-[88px]'} aria-label=${item.name || item.word}>
+        ${body}
+        ${count > 0 && html`<span className="absolute -top-2 -right-2 min-w-[30px] h-[30px] px-1.5 rounded-full bg-yellow-300 border-2 border-white text-[15px] text-amber-700 grid place-items-center shadow">★${count > 99 ? '99+' : count}</span>`}
+      </button>`;
+  });
+
+  function PickerBar({ items, active, onPick, progress, lead }) {
+    const refs = useRef([]);
+    useEffect(() => {
+      const el = refs.current[active];
+      if (el && el.scrollIntoView) el.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+    }, [active, items]);
+    return html`
+      <div className="flex items-center gap-3 px-4 pb-2">
+        ${lead}
+        <div className="scroll-x flex-1 flex gap-3 pt-3 pb-3 px-2">
+          ${items.map((it, i) => html`<${Chip} key=${it.key} ref=${(el) => (refs.current[i] = el)} item=${it}
+              active=${i === active} count=${progress[it.key] || 0} onClick=${() => onPick(i)} />`)}
+        </div>
+      </div>`;
+  }
+
+  function Splash({ onStart }) {
+    return html`
+      <div className="fixed inset-0 z-50 flex flex-col items-center justify-center text-center p-6"
+           style=${{ background: 'radial-gradient(circle at 30% 20%, #FFE4E6 0, transparent 40%), radial-gradient(circle at 75% 75%, #E0E7FF 0, transparent 45%), #FFF8EE' }}>
+        <div className="float text-[150px] leading-none mb-2">🐣</div>
+        <h1 className="title-grad text-[64px] leading-tight">몽글몽글 한글 쓰기</h1>
+        <p className="text-[26px] text-slate-500 mt-3">손가락이나 애플 펜슬로, 같이 따라 써 봐요!</p>
+        <button onClick=${onStart} className="btn3d wiggle mt-10 h-[100px] px-14 rounded-full text-white text-[40px] flex items-center gap-3"
+                style=${{ background: 'linear-gradient(90deg,#FB923C,#F472B6)' }}>
+          <${Icon} name="Play" size=${40} /> 시작하기
+        </button>
+        <p className="text-[18px] text-slate-400 mt-8">🔊 소리를 켜 주세요</p>
+      </div>`;
+  }
+
+  // ---------------------------------------------------------------------------
+  // App
+  // ---------------------------------------------------------------------------
+  function burst(big) {
+    if (!window.confetti) return;
+    const colors = ['#FDE047', '#F472B6', '#60A5FA', '#34D399', '#FB923C', '#C084FC'];
+    const base = { colors, shapes: ['star', 'circle'], scalar: 1.25, disableForReducedMotion: true, zIndex: 60 };
+    window.confetti({ ...base, particleCount: big ? 170 : 90, spread: big ? 120 : 78, startVelocity: big ? 55 : 40, origin: { x: 0.5, y: 0.55 } });
+    if (big) {
+      setTimeout(() => {
+        window.confetti({ ...base, particleCount: 70, angle: 60, spread: 70, origin: { x: 0, y: 0.75 } });
+        window.confetti({ ...base, particleCount: 70, angle: 120, spread: 70, origin: { x: 1, y: 0.75 } });
+      }, 250);
+    }
+  }
+
+  function App() {
+    const [started, setStarted] = useState(false);
+    const [tab, setTab] = useState('consonants');
+    const [idx, setIdx] = useState({ lines: 0, consonants: 0, vowels: 0, words: 0 });
+    const [syl, setSyl] = useState(0);
+    const [pCat, setPCat] = useState(1);
+    const [pIdx, setPIdx] = useState(0);
+    const [grid, setGrid] = useState(true);
+    const [color, setColor] = useState(CRAYONS[0]);
+    const [done, setDone] = useState(false);
+    const [wordDone, setWordDone] = useState(false);
+    const [progress, setProgress] = useState(() => store.get('monggeul.progress', {}));
+    const [reps, setReps] = useState(0);
+    const [session, setSession] = useState(0);
+    const [navId, setNavId] = useState(0);
+    const [stamp, setStamp] = useState(0);
+    const [muted, setMuted] = useState(() => store.get('monggeul.muted', false));
+    const board = useRef(null);
+    const doneRef = useRef(false);
+    const timers = useRef([]);
+
+    useEffect(() => { Speech.setMuted(muted); Sfx.setMuted(muted); store.set('monggeul.muted', muted); }, [muted]);
+
+    const isPractice = tab === 'practice';
+    const word = tab === 'words' ? ITEMS.words[idx.words] : null;
+    const pItems = PCATS[pCat].items;
+    const current = isPractice ? pItems[pIdx] : word ? word.syllables[syl] : ITEMS[tab][idx[tab]];
+    const pickerItems = isPractice ? pItems : ITEMS[tab];
+    const pickerActive = isPractice ? pIdx : idx[tab];
+    const total = useMemo(() => Object.keys(progress).filter((k) => !k.startsWith('w:')).reduce((a, k) => a + progress[k], 0), [progress]);
+    const showGuide = isPractice ? grid : true;
+
+    // ---- helpers
+    const clearTimers = () => { timers.current.forEach(clearTimeout); timers.current = []; };
+    const later = (ms, fn) => timers.current.push(setTimeout(fn, ms));
+    const navigate = (update) => {
+      clearTimers();
+      doneRef.current = false;
+      setDone(false);
+      setWordDone(false);
+      update();
+      setSession((s) => s + 1);
+      setNavId((n) => n + 1);
+    };
+    const bump = (key) => setProgress((p) => {
+      const n = { ...p, [key]: (p[key] || 0) + 1 };
+      store.set('monggeul.progress', n);
+      return n;
+    });
+
+    // Speak the new item's prompt after every navigation
+    useEffect(() => {
+      if (!started || !navId) return;
+      if (word && syl === 0) Speech.say(`${word.word}! ${current.speak}`);
+      else Speech.say(current.speak);
+    }, [navId]);
+
+    // ---- actions
+    function start() {
+      Sfx.unlock();
+      Sfx.pop();
+      Speech.say('몽글몽글 한글 쓰기! 우리 같이 써 볼까?');
+      setStarted(true);
+    }
+    function selectTab(id) {
+      Sfx.pop();
+      if (id === tab) return;
+      navigate(() => { setTab(id); setSyl(0); setReps(0); });
+    }
+    function pickItem(i) {
+      Sfx.pop();
+      navigate(() => {
+        if (isPractice) { setPIdx(i); setReps(0); }
+        else { setIdx((o) => ({ ...o, [tab]: i })); setSyl(0); }
+      });
+    }
+    function pickCat(i) {
+      Sfx.pop();
+      if (i === pCat) return;
+      navigate(() => { setPCat(i); setPIdx(0); setReps(0); });
+    }
+    function next() {
+      Sfx.pop();
+      navigate(() => {
+        if (isPractice) { setPIdx((i) => (i + 1) % pItems.length); setReps(0); }
+        else { setIdx((o) => ({ ...o, [tab]: (o[tab] + 1) % ITEMS[tab].length })); setSyl(0); }
+      });
+    }
+    function prev() {
+      Sfx.pop();
+      navigate(() => {
+        if (isPractice) { setPIdx((i) => (i - 1 + pItems.length) % pItems.length); setReps(0); }
+        else { setIdx((o) => ({ ...o, [tab]: (o[tab] - 1 + ITEMS[tab].length) % ITEMS[tab].length })); setSyl(0); }
+      });
+    }
+    function pickSyllable(i) {
+      Sfx.pop();
+      if (i !== syl) navigate(() => setSyl(i));
+    }
+    function refresh() {
+      clearTimers();
+      if (board.current) board.current.clear(true);
+      Sfx.clear();
+      Speech.say('다시 써볼까?');
+      doneRef.current = false;
+      setDone(false);
+      setWordDone(false);
+    }
+    function listen() {
+      Sfx.pop();
+      if (word && syl === 0) Speech.say(`${word.word}! ${current.speak}`);
+      else Speech.say(current.speak);
+    }
+    function demo() {
+      Sfx.pop();
+      if (board.current) board.current.demo();
+    }
+    function check() {
+      Sfx.pop();
+      if (doneRef.current || !board.current) return;
+      if (!board.current.hasInk()) { Speech.say('먼저 따라서 써 볼까?'); return; }
+      if (board.current.check().pass) onSuccess();
+      else Speech.say('조금만 더! 선을 따라서 써 볼까?');
+    }
+    function toggleGrid() {
+      Sfx.pop();
+      const on = !grid;
+      clearTimers();
+      doneRef.current = false;
+      setDone(false);
+      setGrid(on);
+      setSession((s) => s + 1);
+      // No voice here: the ON/OFF badge and the pop sound are feedback enough.
+    }
+    // Celebrations use real sound effects (chime, sparkle, clapping) — the voice only says words.
+    function onSuccess() {
+      if (doneRef.current) return;
+      doneRef.current = true;
+      setDone(true);
+      Sfx.success();
+      Sfx.sparkle();
+      setStamp((s) => s + 1);
+      bump(current.key);
+
+      if (isPractice) {
+        const n = reps + 1;
+        const milestone = n % 5 === 0;
+        setReps(n);
+        burst(milestone);
+        if (milestone) {
+          Sfx.clap();
+          later(700, () => Speech.say(`우와! 벌써 ${n}번이나 썼어요!`));
+        }
+        later(milestone ? 3200 : 1800, () => {
+          if (board.current) board.current.clear(true);
+          Sfx.clear();
+          doneRef.current = false;
+          setDone(false);
+        });
+      } else if (word) {
+        if (syl < word.syllables.length - 1) {
+          burst(false);
+          later(1500, () => navigate(() => setSyl((s) => s + 1))); // next syllable's prompt is spoken on arrival
+        } else {
+          burst(true);
+          bump(word.key);
+          setWordDone(true);
+          Sfx.clap();
+          later(700, () => Speech.say(`${word.word}! 다 썼어요!`));
+        }
+      } else {
+        burst(false);
+        Sfx.clap();
+        later(700, () => Speech.say(pick(PRAISE)));
+      }
+    }
+
+    // ---- view pieces
+    const tabsView = html`
+      <nav className="grid grid-cols-5 gap-3 px-4 pb-1" role="tablist">
+        ${TABS.map((t) => {
+          const on = t.id === tab;
+          return html`<button key=${t.id} role="tab" aria-selected=${on} onClick=${() => selectTab(t.id)}
+              className="btn3d h-[72px] rounded-3xl flex items-center justify-center gap-2 text-[24px] border-4"
+              style=${on ? { background: t.color, color: '#fff', borderColor: t.color, boxShadow: `0 6px 0 ${t.shadow}` }
+                         : { background: '#fff', color: t.shadow, borderColor: '#FFEBD6' }}>
+              ${t.icon ? html`<${Icon} name=${t.icon} size=${30} />` : html`<span className="text-[30px] leading-none">${t.glyph}</span>`}
+              <span className="whitespace-nowrap">${t.label}</span>
+            </button>`;
+        })}
+      </nav>`;
+
+    const catPills = isPractice && html`
+      <div className="flex-none flex gap-2 pr-2 border-r-4 border-dashed border-violet-100">
+        ${PCATS.map((c, i) => html`<button key=${c.id} onClick=${() => pickCat(i)}
+            className="h-[76px] min-w-[66px] px-2 rounded-2xl text-[21px] border-4"
+            style=${i === pCat ? { background: '#A78BFA', color: '#fff', borderColor: '#A78BFA' } : { background: '#fff', color: '#7C3AED', borderColor: '#EDE9FE' }}>${c.label}</button>`)}
+      </div>`;
+
+    // Model card: what to write
+    let glyph, info;
+    if (word) {
+      glyph = html`<span className="text-[84px] leading-none">${word.emoji}</span>`;
+      info = html`
+        <div className="flex gap-2 justify-center flex-wrap">
+          ${word.syllables.map((s, i) => {
+            const isDone = i < syl || (i === syl && done);
+            const on = i === syl;
+            return html`<button key=${i} onClick=${() => pickSyllable(i)} aria-label=${s.glyph}
+                className="relative w-[64px] h-[64px] rounded-2xl text-[40px] leading-none grid place-items-center border-4"
+                style=${{ background: isDone ? '#DCFCE7' : on ? '#FFF7ED' : '#fff', borderColor: on ? '#FB923C' : isDone ? '#86EFAC' : '#F1F5F9', color: on ? '#EA580C' : '#4A3F5C' }}>
+                ${s.glyph}
+                ${isDone && html`<span className="absolute -top-2 -right-2 w-6 h-6 rounded-full bg-green-500 text-white text-[14px] grid place-items-center">✓</span>`}
+              </button>`;
+          })}
+        </div>`;
+    } else {
+      glyph = current.kind === 'line'
+        ? html`<${MiniSvg} strokes=${current.strokes} size=${110} color="#FB923C" width=${0.06} />`
+        : html`<span className="text-[104px] leading-none text-orange-500">${current.glyph}</span>`;
+      info = html`<${Frag}>
+        <div className="text-[34px] leading-none">${current.name}</div>
+        ${current.kind !== 'line' && html`<div className="text-[24px] leading-none text-slate-500 mt-2">${current.emoji} ${current.word}</div>`}
+      <//>`;
+    }
+
+    const card = html`
+      <div className="card bg-white rounded-[28px] p-4 soft">
+        <div className="card-inner">
+          <div className="glyph-box">${glyph}</div>
+          <div className="flex-1 min-w-0 flex flex-col items-center gap-2">
+            ${info}
+            <button onClick=${listen} className="btn3d mt-1 h-[60px] px-5 rounded-full bg-sky-400 text-white text-[21px] flex items-center gap-2">
+              <${Icon} name="Volume2" size=${26} /> 들어 보기
+            </button>
+          </div>
+        </div>
+      </div>`;
+
+    const filled = reps === 0 ? 0 : ((reps - 1) % 10) + 1;
+    const trophies = Math.floor(reps / 10);
+    const counter = isPractice && html`
+      <div className="bg-white rounded-[28px] px-4 py-3 soft">
+        <div className="flex items-center justify-between">
+          <div className="text-[36px] text-amber-500 leading-none">⭐ × <span key=${reps} className="pop-in">${reps}</span></div>
+          ${trophies > 0 && html`<div className="text-[26px] text-amber-600">🏆 × ${trophies}</div>`}
+        </div>
+        <div className="flex gap-1 mt-2 justify-between">
+          ${Array.from({ length: 10 }, (_, i) => html`<span key=${i + '-' + (i < filled ? reps : 0)}
+              className=${'text-[24px] leading-none ' + (i < filled ? 'pop-in' : '')}
+              style=${{ filter: i < filled ? 'none' : 'grayscale(1) opacity(.25)' }}>⭐</span>`)}
+        </div>
+      </div>`;
+
+    const actions = html`
+      <div className="actions">
+        <${BigBtn} onClick=${demo} bg="#38BDF8" icon="Play">따라 보기<//>
+        <${BigBtn} onClick=${refresh} bg="#FB923C" icon="RotateCcw">다시 쓰기<//>
+        <${BigBtn} onClick=${check} bg="#22C55E" icon="Check" disabled=${done}>다 했어요<//>
+        ${isPractice
+          ? html`<button onClick=${toggleGrid} aria-pressed=${grid} aria-label="칸 도우미"
+                className="btn3d min-h-[66px] rounded-3xl px-3 flex items-center justify-center gap-2 text-[20px] leading-none border-4"
+                style=${grid ? { background: '#EDE9FE', borderColor: '#A78BFA', color: '#6D28D9' } : { background: '#fff', borderColor: '#E2E8F0', color: '#64748B' }}>
+                <${Icon} name="Grid2x2" size=${26} />
+                <span className="whitespace-nowrap">칸 도우미</span>
+                <span className="ml-1 px-2 py-1 rounded-full text-[15px] text-white" style=${{ background: grid ? '#8B5CF6' : '#94A3B8' }}>${grid ? 'ON' : 'OFF'}</span>
+              </button>`
+          : html`<${BigBtn} onClick=${next} bg="#A78BFA" icon="ChevronRight" pulse=${done && (!word || wordDone)}>
+                ${word ? '다음 낱말' : '다음'}<//>`}
+      </div>`;
+
+    const crayons = html`
+      <div className="flex items-center justify-between gap-2 bg-white rounded-[28px] px-3 py-2 soft">
+        ${CRAYONS.map((c) => html`<button key=${c} onClick=${() => { Sfx.pop(); setColor(c); }} aria-label="색깔"
+            className="w-[60px] h-[60px] rounded-full grid place-items-center transition-transform"
+            style=${{ background: c, transform: c === color ? 'scale(1.08)' : 'scale(.86)', boxShadow: c === color ? `0 0 0 4px #fff, 0 0 0 8px ${c}` : 'none' }}>
+            ${c === color && html`<${Icon} name="Check" size=${28} className="text-white" />`}
+          </button>`)}
+      </div>`;
+
+    return html`
+      <div className="h-full flex flex-col"
+           style=${{ paddingTop: 'env(safe-area-inset-top)', paddingBottom: 'env(safe-area-inset-bottom)', paddingLeft: 'env(safe-area-inset-left)', paddingRight: 'env(safe-area-inset-right)' }}>
+        <header className="flex items-center gap-3 px-4 pt-3 pb-3">
+          <div className="w-[56px] h-[56px] rounded-2xl grid place-items-center text-[34px] soft flex-none" style=${{ background: 'linear-gradient(135deg,#FECDD3,#FED7AA)' }}>🐣</div>
+          <h1 className="title-grad text-[32px] leading-none whitespace-nowrap">몽글몽글 한글 쓰기</h1>
+          <div className="flex-1"></div>
+          <div className="h-[60px] px-5 rounded-full bg-yellow-100 border-4 border-yellow-300 flex items-center gap-2 text-[26px] text-amber-600" aria-label="모은 별">
+            <span>⭐</span><span key=${total} className="pop-in">${total}</span>
+          </div>
+          <button onClick=${() => { setMuted((m) => !m); }} aria-label=${muted ? '소리 켜기' : '소리 끄기'}
+                  className="btn3d w-[60px] h-[60px] rounded-full bg-white border-4 border-orange-100 grid place-items-center text-slate-500 flex-none">
+            <${Icon} name=${muted ? 'VolumeX' : 'Volume2'} size=${28} />
+          </button>
+          <button onClick=${refresh} className="btn3d h-[60px] px-5 rounded-full bg-orange-400 text-white text-[22px] flex items-center gap-2 flex-none">
+            <${Icon} name="RotateCcw" size=${26} /> 다시 쓰기
+          </button>
+        </header>
+
+        ${tabsView}
+
+        <${PickerBar} items=${pickerItems} active=${pickerActive} onPick=${pickItem} progress=${progress} lead=${catPills} />
+
+        <div className="workspace">
+          <${Board} ref=${board} item=${current} session=${session} showGrid=${showGuide} showGuide=${showGuide}
+                    color=${color} locked=${done} onSuccess=${onSuccess}>
+            <button onClick=${refresh} aria-label="다시 쓰기"
+                    className="btn3d absolute right-5 -bottom-7 z-10 h-[64px] px-6 rounded-full bg-orange-400 text-white text-[22px] flex items-center gap-2 border-4 border-white">
+              <${Icon} name="RotateCcw" size=${26} /> 다시 쓰기
+            </button>
+            <button onClick=${prev} aria-label="이전"
+                    className="btn3d absolute left-5 -bottom-7 z-10 w-[64px] h-[64px] rounded-full bg-white text-slate-500 grid place-items-center border-4 border-orange-100">
+              <${Icon} name="ChevronLeft" size=${30} />
+            </button>
+            ${stamp > 0 && html`
+              <div key=${stamp} className="stamp text-center">
+                <div className="text-[150px] leading-none" style=${{ filter: 'drop-shadow(0 8px 0 rgba(234,179,8,.35))' }}>⭐</div>
+                <div className="text-[36px] text-amber-500 whitespace-nowrap" style=${{ textShadow: '0 3px 0 #fff' }}>참 잘했어요!</div>
+              </div>`}
+          <//>
+          <aside className=${'side ' + (isPractice ? 'practice' : '')}>
+            ${card}
+            ${counter}
+            ${actions}
+            ${crayons}
+          </aside>
+        </div>
+
+        ${!started && html`<${Splash} onStart=${start} />`}
+      </div>`;
+  }
+
+  ReactDOM.createRoot(document.getElementById('root')).render(html`<${App} />`);
+})();
+</script>
+</body>
+</html>
