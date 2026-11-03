@@ -729,6 +729,57 @@
   }
 
   // ---------------------------------------------------------------------------
+  // 숫자 0–9 (tall 0..1 box, kindergarten stroke order & direction)
+  // ---------------------------------------------------------------------------
+  // Arc in degrees on screen (y down): a1 > a0 turns clockwise, a1 < a0 counter-clockwise.
+  function arc(cx, cy, rx, ry, a0, a1, n = 44) {
+    const out = [];
+    for (let i = 0; i <= n; i++) {
+      const a = ((a0 + ((a1 - a0) * i) / n) * Math.PI) / 180;
+      out.push([cx + rx * Math.cos(a), cy + ry * Math.sin(a)]);
+    }
+    return out;
+  }
+  const DIGITS = {
+    '0': [ellipse(0.5, 0.5, 0.46, 0.48)],                                             // top → left, all the way round
+    '1': [[[0.5, 0.02], [0.5, 0.98]]],                                                // straight down
+    '2': [arc(0.5, 0.28, 0.38, 0.26, 165, 400).concat([[0.06, 0.96], [0.96, 0.96]])], // hook, slide, floor
+    '3': [arc(0.48, 0.26, 0.36, 0.23, 200, 450).concat(arc(0.48, 0.73, 0.4, 0.25, 270, 520).slice(1))], // two bumps
+    '4': [[[0.64, 0.02], [0.06, 0.68], [0.96, 0.68]], [[0.7, 0.02], [0.7, 0.98]]],    // ㄴ-shape, then down
+    '5': [[[0.3, 0.03], [0.27, 0.45]].concat(arc(0.5, 0.68, 0.4, 0.28, -125, 150)), [[0.3, 0.03], [0.92, 0.03]]], // neck+belly, hat
+    '6': [quad([0.78, 0.05], [0.14, 0.2], [0.12, 0.68]).concat(arc(0.5, 0.69, 0.38, 0.29, 180, -175).slice(1))],  // slide down, loop
+    '7': [[[0.06, 0.04], [0.94, 0.04], [0.38, 0.97]]],
+    '8': [arc(0.5, 0.26, 0.3, 0.22, -30, -270)                                        // S down…
+      .concat(arc(0.5, 0.72, 0.36, 0.25, -90, 270).slice(1), arc(0.5, 0.26, 0.3, 0.22, 90, -30).slice(1))], // …and back up
+    '9': [arc(0.5, 0.3, 0.38, 0.27, -10, -370).concat([[0.87, 0.33], [0.82, 0.98]])], // circle, then down
+  };
+  // Where each digit goes on the square: 1, 2 or 3 digits side by side
+  const DIGIT_RECTS = {
+    1: [[0.31, 0.17, 0.69, 0.83]],
+    2: [[0.12, 0.2, 0.46, 0.8], [0.54, 0.2, 0.88, 0.8]],
+    3: [[0.05, 0.25, 0.31, 0.75], [0.37, 0.25, 0.63, 0.75], [0.69, 0.25, 0.95, 0.75]],
+  };
+  const numberStrokes = (n) => {
+    const ds = String(n).split('');
+    return [].concat(...ds.map((d, i) => mapRect(DIGITS[d], DIGIT_RECTS[ds.length][i])));
+  };
+  const SINO = ['영', '일', '이', '삼', '사', '오', '육', '칠', '팔', '구'];
+  const NATIVE = ['', '하나', '둘', '셋', '넷', '다섯', '여섯', '일곱', '여덟', '아홉'];
+  const NATIVE_TENS = ['', '열', '스물', '서른', '마흔', '쉰', '예순', '일흔', '여든', '아흔'];
+  function numberItem(n) {
+    const sino = n === 100 ? '백' : n >= 10 ? (n === 10 ? '' : SINO[n / 10]) + '십' : SINO[n];
+    const native = n === 100 ? '' : n >= 10 ? NATIVE_TENS[n / 10] : NATIVE[n];
+    return {
+      key: 'n:' + n, kind: 'number', glyph: String(n), count: n,
+      name: native ? `${sino} · ${native}` : sino,
+      strokes: numberStrokes(n),
+      // "삼! | 셋!" — the number's name, then how we count it
+      speak: n === 0 ? '영! | 하나도 없어요!' : native ? `${sino}! | ${native}!` : `${sino}!`,
+    };
+  }
+  const NUMBERS = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100];
+
+  // ---------------------------------------------------------------------------
   // Curriculum
   // ---------------------------------------------------------------------------
   const WAVE = Array.from({ length: 61 }, (_, i) => { const t = i / 60; return [0.12 + 0.76 * t, 0.5 - 0.13 * Math.sin(t * Math.PI * 3)]; });
@@ -797,6 +848,7 @@
     consonants: CONSONANTS.map(jamoItem),
     vowels: VOWELS.map(jamoItem),
     words: [].concat(...WORD_THEMES.map((t) => t.items)),
+    numbers: NUMBERS.map(numberItem),
   };
   // 무한 반복 "글자": each letter once. Prefer a longer word as its example ("소방차의 소" over "소의 소").
   const SYLLABLES = (() => {
@@ -812,6 +864,7 @@
     { id: 'consonants', label: '자음', items: ITEMS.consonants },
     { id: 'vowels', label: '모음', items: ITEMS.vowels },
     { id: 'syllables', label: '글자', items: SYLLABLES },
+    { id: 'numbers', label: '숫자', items: ITEMS.numbers },
   ];
 
   const TABS = [
@@ -819,6 +872,7 @@
     { id: 'consonants', label: '자음', glyph: 'ㄱ', color: '#FB923C', shadow: '#EA580C' },
     { id: 'vowels', label: '모음', glyph: 'ㅏ', color: '#34D399', shadow: '#059669' },
     { id: 'words', label: '낱말', glyph: '가', color: '#F472B6', shadow: '#DB2777' },
+    { id: 'numbers', label: '숫자', glyph: '1', color: '#FBBF24', shadow: '#D97706' },
     { id: 'practice', label: '무한 반복', icon: 'Infinity', color: '#A78BFA', shadow: '#7C3AED' },
   ];
 
@@ -843,7 +897,7 @@
   const MILESTONE_MAX = 100; // voice files exist for 5, 10, … 100 repetitions
   function buildPhrases() {
     const out = new Set([SAY.welcome, SAY.retry, SAY.inkFirst, SAY.almost, ...PRAISE, ...NUM_KO]);
-    [...ITEMS.lines, ...ITEMS.consonants, ...ITEMS.vowels].forEach((it) => out.add(it.speak));
+    [...ITEMS.lines, ...ITEMS.consonants, ...ITEMS.vowels, ...ITEMS.numbers].forEach((it) => out.add(it.speak));
     ITEMS.words.forEach((w) => {
       out.add(SAY.wordIntro(w, w.syllables[0]));
       out.add(SAY.wordDone(w));
@@ -1363,13 +1417,22 @@
     let body;
     if (item.kind === 'line') body = html`<${Frag}><${MiniSvg} strokes=${item.strokes} size=${48} color=${active ? '#F97316' : '#64748B'} /><span className="text-[14px] leading-none mt-0.5 text-slate-500">${item.name}</span><//>`;
     else if (item.kind === 'word') body = html`<${Frag}><span className="text-[34px] leading-none">${item.emoji}</span><span className="text-[22px] leading-none mt-1">${item.word}</span><//>`;
-    else body = html`<span className="text-[48px] leading-none" style=${{ color: active ? '#EA580C' : '#4A3F5C' }}>${item.glyph}</span>`;
+    else body = html`<span className="leading-none" style=${{ fontSize: item.glyph.length >= 3 ? 32 : item.glyph.length === 2 ? 40 : 48, color: active ? '#EA580C' : '#4A3F5C' }}>${item.glyph}</span>`;
     return html`
       <button ref=${ref} onClick=${onClick} className=${base + look + ' ' + w + ' chip'} aria-label=${item.name || item.word}>
         ${body}
         ${count > 0 && html`<span className="absolute -top-2 -right-2 min-w-[30px] h-[30px] px-1.5 rounded-full bg-yellow-300 border-2 border-white text-[15px] text-amber-700 grid place-items-center shadow">★${count > 99 ? '99+' : count}</span>`}
       </button>`;
   });
+
+  // How many: 0–9 as apples, tens as "🍎10" bundles (so 30 = three bundles of ten)
+  function CountPicture({ n }) {
+    if (n === 0) return html`<div className="text-[18px] leading-none text-slate-400">🍽️ 하나도 없어요</div>`;
+    if (n < 10) return html`<div className="flex flex-wrap gap-0.5 max-w-[150px] text-[22px] leading-none" aria-label=${'사과 ' + n + '개'}>
+      ${Array.from({ length: n }, (_, i) => html`<span key=${i}>🍎</span>`)}</div>`;
+    return html`<div className="flex flex-wrap gap-1 max-w-[190px]" aria-label=${'사과 10개 묶음 ' + n / 10 + '개'}>
+      ${Array.from({ length: n / 10 }, (_, i) => html`<span key=${i} className="px-1.5 py-0.5 rounded-lg bg-red-50 border-2 border-red-200 text-[14px] leading-none whitespace-nowrap">🍎10</span>`)}</div>`;
+  }
 
   function PickerBar({ items, active, onPick, progress, lead }) {
     const refs = useRef([]);
@@ -1421,7 +1484,7 @@
   function App() {
     const [started, setStarted] = useState(false);
     const [tab, setTab] = useState('consonants');
-    const [idx, setIdx] = useState({ lines: 0, consonants: 0, vowels: 0, words: 0 });
+    const [idx, setIdx] = useState({ lines: 0, consonants: 0, vowels: 0, words: 0, numbers: 0 });
     const [syl, setSyl] = useState(0);
     const [pCat, setPCat] = useState(1);
     const [wTheme, setWTheme] = useState(0);
@@ -1623,14 +1686,14 @@
 
     // ---- view pieces
     const tabsView = html`
-      <nav className="grid grid-cols-5 gap-3 px-4 pb-1" role="tablist">
+      <nav className="grid gap-2.5 px-4 pb-1" style=${{ gridTemplateColumns: `repeat(${TABS.length}, minmax(0, 1fr))` }} role="tablist">
         ${TABS.map((t) => {
           const on = t.id === tab;
           return html`<button key=${t.id} role="tab" aria-selected=${on} onClick=${() => selectTab(t.id)}
-              className="btn3d tab-btn rounded-3xl flex items-center justify-center gap-2 text-[24px] border-4"
+              className="btn3d tab-btn min-w-0 rounded-3xl flex items-center justify-center gap-1.5 text-[21px] border-4"
               style=${on ? { background: t.color, color: '#fff', borderColor: t.color, boxShadow: `0 6px 0 ${t.shadow}` }
                          : { background: '#fff', color: t.shadow, borderColor: '#FFEBD6' }}>
-              ${t.icon ? html`<${Icon} name=${t.icon} size=${30} />` : html`<span className="text-[30px] leading-none">${t.glyph}</span>`}
+              ${t.icon ? html`<${Icon} name=${t.icon} size=${26} />` : html`<span className="text-[26px] leading-none">${t.glyph}</span>`}
               <span className="whitespace-nowrap">${t.label}</span>
             </button>`;
         })}
@@ -1671,12 +1734,15 @@
           })}
         </div>`;
     } else {
+      const gSize = current.glyph && current.glyph.length >= 3 ? 40 : current.glyph && current.glyph.length === 2 ? 54 : 72;
       glyph = current.kind === 'line'
         ? html`<${MiniSvg} strokes=${current.strokes} size=${76} color="#FB923C" width=${0.07} />`
-        : html`<span className="text-[72px] leading-none text-orange-500">${current.glyph}</span>`;
+        : html`<span className="leading-none text-orange-500" style=${{ fontSize: gSize }}>${current.glyph}</span>`;
       label = html`<${Frag}>
         <div className="text-[32px] leading-none">${current.name}</div>
-        ${current.kind !== 'line' && html`<div className="text-[22px] leading-none text-slate-500">${current.emoji} ${current.word}</div>`}
+        ${current.kind === 'number'
+          ? html`<${CountPicture} n=${current.count} />`
+          : current.kind !== 'line' && html`<div className="text-[22px] leading-none text-slate-500">${current.emoji} ${current.word}</div>`}
       <//>`;
     }
 
