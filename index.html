@@ -6,10 +6,10 @@
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="default" />
-<meta name="apple-mobile-web-app-title" content="한글 쓰기" />
+<meta name="apple-mobile-web-app-title" content="따라 쓰기" />
 <meta name="format-detection" content="telephone=no" />
 <meta name="theme-color" content="#FFF8EE" />
-<title>몽글몽글 한글 쓰기</title>
+<title>몽글몽글 따라 쓰기</title>
 <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png" />
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
 <link rel="manifest" href="manifest.webmanifest" />
@@ -66,7 +66,7 @@
   .scroll-y { overflow-y: auto; touch-action: pan-y; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
 
   /* Big, finger/Pencil-friendly slider (말 빠르기) */
-  .big-range { -webkit-appearance: none; appearance: none; height: 48px; background: transparent; touch-action: none; }
+  .big-range { -webkit-appearance: none; appearance: none; height: 3rem; background: transparent; touch-action: none; }
   .big-range::-webkit-slider-runnable-track { height: 14px; border-radius: 7px; background: linear-gradient(90deg, #BAE6FD, #FDBA74); }
   .big-range::-webkit-slider-thumb { -webkit-appearance: none; width: 40px; height: 40px; margin-top: -13px; border-radius: 50%;
     background: #FB923C; border: 5px solid #fff; box-shadow: 0 3px 8px rgba(0,0,0,.25); }
@@ -98,49 +98,107 @@
   .btn3d:active { transform: translateY(4px); box-shadow: 0 2px 0 rgba(0,0,0,0.16); }
   .btn3d:disabled { filter: grayscale(.6) opacity(.55); }
 
-  /* Layout (tested for iPad Pro 11" 834×1194 and 12.9" 1024×1366)
-     landscape:  [ crayons | paper ]  [ info card ]
-                                      [ controls  ]
-     portrait:   [ info card ]
-                 [ crayons | paper ]
-                 [ controls ]                                                        */
-  .chip { height: 84px; }
-  .chip-sq { width: 84px; }
-  .tab-btn { height: 70px; }
-  .workspace { flex: 1 1 0; min-height: 0; display: grid; gap: 16px; padding: 6px 20px 18px; }
+  /* ===== Responsive layout =====================================================================
+     Sizes: the root font size follows the screen's SHORT side (12–20px; 16px on an 11" iPad) and
+     every size is in rem, so the whole UI grows/shrinks with the screen.
+     Arrangement: picked from the screen's SHAPE, not the device (see layoutFor() in the script):
+       wide         tablet landscape, laptop     [ bars ] / [ crayons+paper | card + buttons ]
+       wide-short   phone landscape              [ crayons+paper | bars, card, buttons ]
+       tall         tablet portrait, foldable    [ bars ] / [ card ] / [ crayons+paper ] / [ buttons ]
+       tall-narrow  phone portrait               like tall, compact bars, crayons in a row, icon buttons
+     ============================================================================================ */
+  .app { height: 100%; display: flex; flex-direction: column; }
+  .topbar { grid-area: topbar; }
+  .tabs { grid-area: tabs; }
+  .picker { grid-area: picker; }
+  .chip { height: 5.25rem; }
+  .chip-sq { width: 5.25rem; }
+  .tab-btn { height: 4.375rem; }
+  .workspace { flex: 1 1 0; min-height: 0; display: grid; gap: 1rem; padding: 0.375rem 1.25rem 1.125rem; }
   .board-area { grid-area: board; min-width: 0; min-height: 0; position: relative; display: flex; align-items: center; justify-content: center; }
   .info { grid-area: info; min-width: 0; }
   .controls { grid-area: controls; min-width: 0; }
-  .card { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; background: #fff; border-radius: 28px; padding: 14px 18px; }
-  .glyph-box { flex: none; width: 96px; height: 96px; display: grid; place-items: center; border-radius: 22px; background: #FFF4E6; }
-  .card-text { flex: 1 1 0; min-width: 0; display: flex; gap: 12px; }
-  .card-label { min-width: 0; display: flex; flex-direction: column; gap: 6px; }
-  .actions { display: flex; gap: 14px; }
-  .act-row { display: flex; gap: 14px; flex: 1 1 0; min-width: 0; }
-  .rail { display: flex; flex-direction: column; gap: 10px; padding: 10px; background: #fff; border-radius: 40px; }
+  .crayon-row { grid-area: crayons; display: none; }
+  .card { display: flex; flex-wrap: wrap; align-items: center; gap: 1rem; background: #fff; border-radius: 1.75rem; padding: 0.875rem 1.125rem; }
+  .glyph-box { flex: none; width: 6rem; height: 6rem; display: grid; place-items: center; border-radius: 1.375rem; background: #FFF4E6; overflow: hidden; }
+  .card-text { flex: 1 1 0; min-width: 0; display: flex; gap: 0.75rem; }
+  .card-label { min-width: 0; display: flex; flex-direction: column; gap: 0.375rem; }
+  .actions { display: flex; gap: 0.875rem; }
+  .act-row { display: flex; gap: 0.875rem; flex: 1 1 0; min-width: 0; }
+  .rail { display: flex; flex-direction: column; gap: 0.625rem; padding: 0.625rem; background: #fff; border-radius: 2.5rem; }
 
-  @media (orientation: landscape) {
-    .workspace { grid-template-columns: minmax(0, 1fr) 340px; grid-template-rows: auto minmax(0, 1fr); grid-template-areas: "board info" "board controls"; }
-    .card-text { flex-direction: column; align-items: flex-start; }
-    .counter { flex-basis: 100%; }
-    .actions { flex-direction: column; }
+  /* --- wide: paper on the left, card + buttons in a side column --- */
+  [data-layout=wide] .workspace { grid-template-columns: minmax(0, 1fr) clamp(17rem, 30vw, 22rem); grid-template-rows: auto minmax(0, 1fr); grid-template-areas: "board info" "board controls"; }
+  [data-layout=wide] .counter { flex-basis: 100%; }
+  [data-layout=wide] .actions, [data-layout=wide-short] .actions { flex-direction: column; }
+  [data-layout=wide] .card-text, [data-layout=wide-short] .card-text { flex-direction: column; align-items: flex-start; }
+
+  /* --- tall / tall-narrow: card, paper, buttons stacked; buttons in ONE row --- */
+  [data-layout^=tall] .workspace { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto auto; grid-template-areas: "info" "board" "crayons" "controls"; }
+  [data-layout^=tall] .card-text { flex-direction: row; align-items: center; justify-content: space-between; }
+  [data-layout^=tall] .counter { flex: none; }
+  [data-layout^=tall] .actions { gap: 0.75rem; }
+  [data-layout^=tall] .act-row { display: contents; }
+  [data-layout^=tall] .o1 { order: 1; } [data-layout^=tall] .o2 { order: 2; } [data-layout^=tall] .o3 { order: 3; }
+  [data-layout^=tall] .o4 { order: 4; } [data-layout^=tall] .o5 { order: 5; }
+  [data-layout^=tall] .landscape-only { display: none; }
+
+  /* --- phones (tall-narrow, wide-short): compact bars, icon-only secondary buttons --- */
+  [data-layout=tall-narrow] .title-text, [data-layout=wide-short] .title-text,
+  [data-layout=tall-narrow] .topbar .btn-label, [data-layout=wide-short] .topbar .btn-label { display: none; }
+  [data-layout=tall-narrow] .topbar, [data-layout=wide-short] .topbar { gap: 0.5rem; padding: 0.375rem 0.5rem; }
+  [data-layout=tall-narrow] .tab-btn, [data-layout=wide-short] .tab-btn { height: 3.25rem; font-size: 1.125rem; }
+  [data-layout=tall-narrow] .chip, [data-layout=wide-short] .chip { height: 4.25rem; }
+  [data-layout=tall-narrow] .chip-sq, [data-layout=wide-short] .chip-sq { width: 4.25rem; }
+  [data-layout=tall-narrow] .glyph-box, [data-layout=wide-short] .glyph-box { width: 3.75rem; height: 3.75rem; }
+  [data-layout=tall-narrow] .glyph-box > *, [data-layout=wide-short] .glyph-box > * { transform: scale(.62); }
+  [data-layout=tall-narrow] .card, [data-layout=wide-short] .card { padding: 0.5rem 0.75rem; gap: 0.625rem; border-radius: 1.25rem; }
+  [data-layout=tall-narrow] .o1 .btn-label, [data-layout=tall-narrow] .o3 .btn-label,
+  [data-layout=tall-narrow] .o4 .btn-label, [data-layout=tall-narrow] .o5 .btn-label { display: none; }
+  [data-layout=tall-narrow] .o2 { flex: 2 1 0; }
+  [data-layout=tall-narrow] .workspace { padding: 0.25rem 0.75rem 0.75rem; gap: 0.625rem; }
+  [data-layout=tall-narrow] .crayon-row { display: flex; justify-content: center; }
+
+  /* --- wide-short: the paper takes the full height; everything else stacks in the right column --- */
+  [data-layout=wide-short].app { display: grid; column-gap: 0.75rem; padding: 0.25rem 0.5rem;
+    grid-template-columns: minmax(0, 1fr) minmax(16rem, 44%);
+    grid-template-rows: auto auto auto auto minmax(0, 1fr);
+    grid-template-areas: "board topbar" "board tabs" "board picker" "board info" "board controls"; }
+  [data-layout=wide-short] .workspace { display: contents; }
+  [data-layout=wide-short] .topbar, [data-layout=wide-short] .tabs, [data-layout=wide-short] .picker { padding-left: 0; padding-right: 0; }
+  [data-layout=wide-short] .actions { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 0.5rem; }
+  [data-layout=wide-short] .act-row { display: contents; }
+  [data-layout=wide-short] .o1, [data-layout=wide-short] .o2 { grid-column: span 3; order: 1; }
+  [data-layout=wide-short] .o3 { grid-column: span 2; order: 2; }
+  [data-layout=wide-short] .o4 { grid-column: span 2; order: 3; }
+  [data-layout=wide-short] .o5 { grid-column: span 2; order: 4; }
+  [data-layout=wide-short] .o3 .btn-label, [data-layout=wide-short] .o4 .btn-label, [data-layout=wide-short] .o5 .btn-label { display: none; }
+  [data-layout=wide-short] .actions > * , [data-layout=wide-short] .act-row > * { height: 3.5rem; }
+  [data-layout=wide-short] .card-text { flex-direction: row; align-items: center; justify-content: space-between; }
+  [data-layout=wide-short] .o3 { width: auto; }
+  /* start screen on low screens: smaller chick + title so the cards fit without scrolling */
+  @media (max-height: 520px) {
+    .chooser-hero { font-size: 3.25rem !important; }
+    .chooser-title { font-size: 2.25rem !important; }
+    .chooser-card { min-height: 8.5rem !important; padding-top: 0.75rem !important; padding-bottom: 0.75rem !important; }
   }
-  @media (orientation: portrait) {
-    .workspace { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto; grid-template-areas: "info" "board" "controls"; }
-    .card-text { flex-direction: row; align-items: center; justify-content: space-between; }
-    .counter { flex: none; }
-    /* one row of buttons: flatten the rows and order the buttons */
-    .actions { gap: 12px; }
-    .act-row { display: contents; }
-    .o1 { order: 1; } .o2 { order: 2; } .o3 { order: 3; } .o4 { order: 4; } .o5 { order: 5; }
-    .landscape-only { display: none; }
+  /* phones: bars stay ≥ 42px tall (finger-sized) but lose their extra padding */
+  [data-layout=tall-narrow] .tab-btn, [data-layout=wide-short] .tab-btn { height: 3.5rem; }
+  [data-layout=tall-narrow] .topbar .btn3d, [data-layout=wide-short] .topbar .btn3d { height: 3.5rem; min-width: 3.5rem; }
+  [data-layout=tall-narrow] .topbar .btn3d:first-child, [data-layout=wide-short] .topbar .btn3d:first-child { width: 3.5rem; }
+  [data-layout=tall-narrow] .picker .scroll-x, [data-layout=wide-short] .picker .scroll-x { padding-top: 0.5rem; padding-bottom: 0.5rem; }
+  /* very low landscape screens (≈360px): drop the big letter tile, the picker already shows it */
+  @media (max-height: 400px) {
+    [data-layout=wide-short] .glyph-box { display: none; }
+    [data-layout=wide-short] .topbar { padding-top: 0.25rem; padding-bottom: 0.25rem; }
+    [data-layout=wide-short] .topbar .refresh-btn { display: none; } /* 다시 쓰기 is in the button row below */
   }
-  /* Short landscape screens (iPad 11"): compact the top bars so the paper stays big */
-  @media (orientation: landscape) and (max-height: 900px) {
-    .chip { height: 74px; }
-    .chip-sq { width: 74px; }
-    .tab-btn { height: 60px; }
-    .workspace { padding-top: 2px; }
+  /* tiny landscape (≈320px tall): all five buttons in one icon row */
+  @media (max-height: 340px) {
+    [data-layout=wide-short] .actions { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+    [data-layout=wide-short] .o1, [data-layout=wide-short] .o2, [data-layout=wide-short] .o3,
+    [data-layout=wide-short] .o4, [data-layout=wide-short] .o5 { grid-column: span 1; }
+    [data-layout=wide-short] .o1 .btn-label { display: none; }
   }
 
   /* Animations */
@@ -275,9 +333,34 @@
     return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
   };
 
+  // ---------------------------------------------------------------------------
+  // Responsive sizing: root font size follows the screen's short side (16px on an 11" iPad),
+  // and the arrangement follows the screen's shape (see the layout notes in the <style> block).
+  // ---------------------------------------------------------------------------
+  function layoutFor() {
+    const w = window.innerWidth, h = window.innerHeight;
+    const base = Math.max(12, Math.min(20, Math.min(w, h) / 52));
+    document.documentElement.style.fontSize = base.toFixed(2) + 'px';
+    if (w / h >= 1.2) return h < 560 ? 'wide-short' : 'wide';
+    return w < 600 ? 'tall-narrow' : 'tall';
+  }
+  layoutFor(); // set the root size before the first paint
+  function useLayout() {
+    const [layout, setLayout] = useState(layoutFor);
+    useEffect(() => {
+      let t = 0;
+      const on = () => { clearTimeout(t); t = setTimeout(() => setLayout(layoutFor()), 60); };
+      window.addEventListener('resize', on);
+      window.addEventListener('orientationchange', on);
+      return () => { window.removeEventListener('resize', on); window.removeEventListener('orientationchange', on); };
+    }, []);
+    return layout;
+  }
+  const remPx = () => parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+
   const Icon = ({ name, size = 28, stroke = 2.6, className = '' }) => {
     const C = window.LucideReact && window.LucideReact[name];
-    return C ? html`<${C} size=${size} strokeWidth=${stroke} className=${className} aria-hidden="true" />` : null;
+    return C ? html`<${C} size=${typeof size === 'number' ? size / 16 + 'rem' : size} strokeWidth=${stroke} className=${className} aria-hidden="true" />` : null;
   };
 
   // ---------------------------------------------------------------------------
@@ -893,8 +976,17 @@
   const PRAISE = ['참 잘했어요!', '우와, 멋지다!', '정말 예쁘게 썼네!', '최고야!'];
 
   // Every sentence the app says is built here, so the AI-voice generator can make a file for each one.
+  // What the child picks on the start screen. tabs = the tabs inside; pcats = 무한 반복 categories.
+  const SUBJECTS = [
+    { id: 'hangul', label: '한글', glyph: '가', sub: '자음 · 모음 · 낱말', color: '#FB923C', shadow: '#EA580C',
+      tabs: ['consonants', 'vowels', 'words', 'practice'], pcats: ['consonants', 'vowels', 'syllables'], intro: '한글 써 볼까?' },
+    { id: 'numbers', label: '숫자', glyph: '1', sub: '0 ~ 100', color: '#FBBF24', shadow: '#D97706',
+      tabs: ['numbers', 'practice'], pcats: ['numbers'], intro: '숫자 써 볼까?' },
+    { id: 'lines', label: '선 긋기', glyph: '〰️', sub: '손 풀기', color: '#38BDF8', shadow: '#0EA5E9',
+      tabs: ['lines', 'practice'], pcats: ['lines'], intro: '선 긋기 해 볼까?' },
+  ];
+
   const SAY = {
-    welcome: '몽글몽글 한글 쓰기! 우리 같이 써 볼까?',
     retry: '다시 써볼까?',
     inkFirst: '먼저 따라서 써 볼까?',
     almost: '조금만 더! 선을 따라서 써 볼까?',
@@ -905,7 +997,7 @@
   };
   const MILESTONE_MAX = 100; // voice files exist for 5, 10, … 100 repetitions
   function buildPhrases() {
-    const out = new Set([SAY.welcome, SAY.retry, SAY.inkFirst, SAY.almost, ...PRAISE, ...NUM_KO]);
+    const out = new Set([SAY.retry, SAY.inkFirst, SAY.almost, ...PRAISE, ...NUM_KO, ...SUBJECTS.map((x) => x.intro)]);
     [...ITEMS.lines, ...ITEMS.consonants, ...ITEMS.vowels, ...ITEMS.numbers].forEach((it) => out.add(it.speak));
     ITEMS.words.forEach((w) => {
       out.add(SAY.wordIntro(w, w.syllables[0]));
@@ -1178,21 +1270,24 @@
       if (res.pass && p.onSuccess) p.onSuccess();
     }
 
-    // Measure available space → square canvas size
+    // Measure available space → square canvas size (the crayon rail, if any, sits to the left)
+    const lastBox = useRef(null);
+    const measure = () => {
+      const b = lastBox.current;
+      if (!b) return;
+      const rail = P.current.railRem ? P.current.railRem * remPx() + RAIL_GAP : 0;
+      setS(Math.max(160, Math.floor(Math.min(b.w - rail - 2 * BORDER - 8, b.h - 2 * BORDER - 14))));
+    };
     useEffect(() => {
-      const el = holder.current;
-      // Keep room on both sides for the crayon rail so the paper stays centred.
-      const measure = (w, h) => {
-        const rail = P.current.railWidth ? 2 * (P.current.railWidth + RAIL_GAP) : 0;
-        setS(Math.max(220, Math.floor(Math.min(w - rail - 2 * BORDER - 8, h - 2 * BORDER - 20))));
-      };
       const ro = new ResizeObserver((entries) => {
         const r = entries[0].contentRect;
-        measure(r.width, r.height);
+        lastBox.current = { w: r.width, h: r.height };
+        measure();
       });
-      ro.observe(el);
+      ro.observe(holder.current);
       return () => ro.disconnect();
     }, []);
+    useEffect(() => { measure(); }, [props.railRem]); // layout switched between rail and crayon row
 
     // (Re)configure canvases for the current size + device pixel ratio
     useLayoutEffect(() => {
@@ -1384,8 +1479,9 @@
 
     const outer = S + 2 * BORDER;
     return html`
-      <div ref=${holder} className="board-area">
-        <div className="relative" style=${{ width: outer, height: outer }}>
+      <div ref=${holder} className="board-area" style=${{ gap: RAIL_GAP }}>
+        ${props.rail}
+        <div className="relative flex-none" style=${{ width: outer, height: outer }}>
           <div ref=${pad} className="pad absolute inset-0 bg-white overflow-hidden"
                style=${{ borderRadius: 34, border: `${BORDER}px solid #FED7AA`, boxShadow: '0 10px 0 #FDBA74, 0 22px 44px rgba(251,146,60,.22)' }}
                aria-label="글씨 쓰는 곳">
@@ -1395,7 +1491,6 @@
           </div>
           ${bubbles.map((b) => html`<span key=${b.k} className="bubble"
               style=${{ width: b.size, height: b.size, left: b.left, top: b.top, '--dx': b.dx, '--dy': b.dy, animationDelay: b.delay }}></span>`)}
-          ${props.rail && html`<div className="absolute top-1/2 -translate-y-1/2" style=${{ right: `calc(100% + ${RAIL_GAP}px)` }}>${props.rail}</div>`}
           ${props.children}
         </div>
       </div>`;
@@ -1405,7 +1500,7 @@
   // Presentational pieces
   // ---------------------------------------------------------------------------
   const MiniSvg = ({ strokes, size = 52, color = '#64748B', width = 0.075 }) => html`
-    <svg viewBox="0 0 1 1" width=${size} height=${size} aria-hidden="true">
+    <svg viewBox="0 0 1 1" width=${size / 16 + 'rem'} height=${size / 16 + 'rem'} aria-hidden="true">
       ${strokes.map((s, i) => html`<polyline key=${i} points=${s.map((p) => p.join(',')).join(' ')}
         fill="none" stroke=${color} strokeWidth=${width} strokeLinecap="round" strokeLinejoin="round" />`)}
     </svg>`;
@@ -1413,34 +1508,34 @@
   // Solid (primary) or outlined (secondary) chunky button. Height 64px everywhere.
   const BigBtn = ({ onClick, bg, fg = '#fff', border, icon, children, pulse, label, disabled, className = '' }) => html`
     <button onClick=${onClick} disabled=${disabled} aria-label=${label || (typeof children === 'string' ? children : '')}
-      className=${`btn3d ${pulse ? 'wiggle' : ''} h-[64px] min-w-0 rounded-[22px] px-4 flex items-center justify-center gap-2 text-[22px] leading-none ${className}`}
+      className=${`btn3d ${pulse ? 'wiggle' : ''} h-[4rem] min-w-0 rounded-[1.375rem] px-4 flex items-center justify-center gap-2 text-[1.375rem] leading-none ${className}`}
       style=${{ background: bg, color: fg, border: border ? `4px solid ${border}` : '4px solid transparent' }}>
       ${icon && html`<${Icon} name=${icon} size=${28} />`}
-      ${children && html`<span className="whitespace-nowrap">${children}</span>`}
+      ${children && html`<span className="btn-label whitespace-nowrap">${children}</span>`}
     </button>`;
 
   const Chip = forwardRef(function Chip({ item, active, count, onClick }, ref) {
     const base = 'relative flex-none rounded-3xl border-4 flex flex-col items-center justify-center transition-transform duration-150 ';
     const look = active ? 'bg-orange-50 border-orange-400 scale-105' : 'bg-white border-orange-100';
-    const w = item.kind === 'word' ? 'min-w-[108px] px-3' : 'chip-sq';
+    const w = item.kind === 'word' ? 'min-w-[6.75rem] px-3' : 'chip-sq';
     let body;
-    if (item.kind === 'line') body = html`<${Frag}><${MiniSvg} strokes=${item.strokes} size=${48} color=${active ? '#F97316' : '#64748B'} /><span className="text-[14px] leading-none mt-0.5 text-slate-500">${item.name}</span><//>`;
-    else if (item.kind === 'word') body = html`<${Frag}><span className="text-[34px] leading-none">${item.emoji}</span><span className="text-[22px] leading-none mt-1">${item.word}</span><//>`;
-    else body = html`<span className="leading-none" style=${{ fontSize: item.glyph.length >= 3 ? 32 : item.glyph.length === 2 ? 40 : 48, color: active ? '#EA580C' : '#4A3F5C' }}>${item.glyph}</span>`;
+    if (item.kind === 'line') body = html`<${Frag}><${MiniSvg} strokes=${item.strokes} size=${48} color=${active ? '#F97316' : '#64748B'} /><span className="text-[0.875rem] leading-none mt-0.5 text-slate-500">${item.name}</span><//>`;
+    else if (item.kind === 'word') body = html`<${Frag}><span className="text-[2.125rem] leading-none">${item.emoji}</span><span className="text-[1.375rem] leading-none mt-1">${item.word}</span><//>`;
+    else body = html`<span className="leading-none" style=${{ fontSize: (item.glyph.length >= 3 ? 2 : item.glyph.length === 2 ? 2.5 : 3) + 'rem', color: active ? '#EA580C' : '#4A3F5C' }}>${item.glyph}</span>`;
     return html`
       <button ref=${ref} onClick=${onClick} className=${base + look + ' ' + w + ' chip'} aria-label=${item.name || item.word}>
         ${body}
-        ${count > 0 && html`<span className="absolute -top-2 -right-2 min-w-[30px] h-[30px] px-1.5 rounded-full bg-yellow-300 border-2 border-white text-[15px] text-amber-700 grid place-items-center shadow">★${count > 99 ? '99+' : count}</span>`}
+        ${count > 0 && html`<span className="absolute -top-2 -right-2 min-w-[1.875rem] h-[1.875rem] px-1.5 rounded-full bg-yellow-300 border-2 border-white text-[0.9375rem] text-amber-700 grid place-items-center shadow">★${count > 99 ? '99+' : count}</span>`}
       </button>`;
   });
 
   // How many: 0–9 as apples, tens as "🍎10" bundles (so 30 = three bundles of ten)
   function CountPicture({ n }) {
-    if (n === 0) return html`<div className="text-[18px] leading-none text-slate-400">🍽️ 하나도 없어요</div>`;
-    if (n < 10) return html`<div className="flex flex-wrap gap-0.5 max-w-[150px] text-[22px] leading-none" aria-label=${'사과 ' + n + '개'}>
+    if (n === 0) return html`<div className="text-[1.125rem] leading-none text-slate-400">🍽️ 하나도 없어요</div>`;
+    if (n < 10) return html`<div className="flex flex-wrap gap-0.5 max-w-[9.375rem] text-[1.375rem] leading-none" aria-label=${'사과 ' + n + '개'}>
       ${Array.from({ length: n }, (_, i) => html`<span key=${i}>🍎</span>`)}</div>`;
-    return html`<div className="flex flex-wrap gap-1 max-w-[190px]" aria-label=${'사과 10개 묶음 ' + n / 10 + '개'}>
-      ${Array.from({ length: n / 10 }, (_, i) => html`<span key=${i} className="px-1.5 py-0.5 rounded-lg bg-red-50 border-2 border-red-200 text-[14px] leading-none whitespace-nowrap">🍎10</span>`)}</div>`;
+    return html`<div className="flex flex-wrap gap-1 max-w-[11.875rem]" aria-label=${'사과 10개 묶음 ' + n / 10 + '개'}>
+      ${Array.from({ length: n / 10 }, (_, i) => html`<span key=${i} className="px-1.5 py-0.5 rounded-lg bg-red-50 border-2 border-red-200 text-[0.875rem] leading-none whitespace-nowrap">🍎10</span>`)}</div>`;
   }
 
   function PickerBar({ items, active, onPick, progress, lead }) {
@@ -1450,9 +1545,9 @@
       if (el && el.scrollIntoView) el.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
     }, [active, items]);
     return html`
-      <div className="flex items-center gap-3 px-4 pb-2">
-        ${lead}
-        <div className="scroll-x flex-1 flex gap-3 pt-3 pb-3 px-2">
+      <div className="picker flex items-center px-4 pb-1 min-w-0">
+        <div className="scroll-x flex-1 flex items-center gap-3 pt-3 pb-3 px-2">
+          ${lead}
           ${items.map((it, i) => html`<${Chip} key=${it.key} ref=${(el) => (refs.current[i] = el)} item=${it}
               active=${i === active} count=${progress[it.key] || 0} onClick=${() => onPick(i)} />`)}
         </div>
@@ -1528,35 +1623,57 @@
   function ProfilePicker({ profiles, activeId, onPick, title }) {
     return html`
       <div className="flex flex-col items-center">
-        ${title && html`<p className="text-[30px] text-slate-600 mb-5">${title}</p>`}
+        ${title && html`<p className="text-[1.875rem] text-slate-600 mb-5">${title}</p>`}
         <div className="flex flex-wrap justify-center gap-5">
           ${profiles.map((p) => html`<button key=${p.id} onClick=${() => onPick(p.id)}
-              className="btn3d w-[150px] h-[170px] rounded-[32px] bg-white border-4 flex flex-col items-center justify-center gap-2"
+              className="btn3d w-[9.375rem] h-[10.625rem] rounded-[2rem] bg-white border-4 flex flex-col items-center justify-center gap-2"
               style=${{ borderColor: p.id === activeId ? '#FB923C' : '#FFE4D0' }}>
-              <span className="text-[76px] leading-none">${p.icon}</span>
-              <span className="text-[24px] leading-none text-slate-600 max-w-[130px] truncate">${p.name}</span>
+              <span className="text-[4.75rem] leading-none">${p.icon}</span>
+              <span className="text-[1.5rem] leading-none text-slate-600 max-w-[8.125rem] truncate">${p.name}</span>
             </button>`)}
         </div>
       </div>`;
   }
 
-  function Splash({ onStart, profiles, activeId }) {
+  // Start screen: (who is writing?) → what to write: 한글 · 숫자 · 선 긋기. Fits any screen shape.
+  function Chooser({ profiles, activeId, progress, firstTime, onStart, onTap }) {
     const many = profiles.length > 1;
+    const [who, setWho] = useState(many && firstTime ? null : activeId);
+    const me = profiles.find((p) => p.id === who);
+    const starsFor = (sub) => sub.pcats.concat(sub.tabs)
+      .map((c) => (c === 'syllables' ? 'words' : c))
+      .filter((c, i, a) => a.indexOf(c) === i && STAR_CATS.some(([k]) => k === c))
+      .reduce((a, c) => a + starsOf(who === activeId ? progress : Profiles.progress(who), c), 0);
     return html`
-      <div className="fixed inset-0 z-50 flex flex-col items-center justify-center text-center p-6"
-           style=${{ background: 'radial-gradient(circle at 30% 20%, #FFE4E6 0, transparent 40%), radial-gradient(circle at 75% 75%, #E0E7FF 0, transparent 45%), #FFF8EE' }}>
-        <div className=${'float leading-none mb-2 ' + (many ? 'text-[110px]' : 'text-[150px]')}>🐣</div>
-        <h1 className="title-grad text-[64px] leading-tight">몽글몽글 한글 쓰기</h1>
-        ${many
-          ? html`<div className="mt-8"><${ProfilePicker} profiles=${profiles} activeId=${activeId} onPick=${onStart} title="누가 쓸까요?" /></div>`
-          : html`<${Frag}>
-              <p className="text-[26px] text-slate-500 mt-3">손가락이나 애플 펜슬로, 같이 따라 써 봐요!</p>
-              <button onClick=${() => onStart(activeId)} className="btn3d wiggle mt-10 h-[100px] px-14 rounded-full text-white text-[40px] flex items-center gap-3"
-                      style=${{ background: 'linear-gradient(90deg,#FB923C,#F472B6)' }}>
-                <${Icon} name="Play" size=${40} /> 시작하기
-              </button>
-            <//>`}
-        <p className="text-[18px] text-slate-400 mt-8">🔊 소리를 켜 주세요</p>
+      <div className="scroll-y fixed inset-0 z-50 flex flex-col items-center text-center px-4 py-6"
+           style=${{ background: 'radial-gradient(circle at 30% 20%, #FFE4E6 0, transparent 40%), radial-gradient(circle at 75% 75%, #E0E7FF 0, transparent 45%), #FFF8EE',
+                     paddingTop: 'max(1.5rem, env(safe-area-inset-top))', paddingBottom: 'max(1.5rem, env(safe-area-inset-bottom))' }}>
+        <div className="my-auto w-full max-w-[56rem] flex flex-col items-center">
+          <div className="chooser-hero float text-[5.5rem] leading-none">🐣</div>
+          <h1 className="chooser-title title-grad text-[3.25rem] leading-tight mt-1">몽글몽글 따라 쓰기</h1>
+          ${!me
+            ? html`<div className="mt-6"><${ProfilePicker} profiles=${profiles} activeId=${activeId} title="누가 쓸까요?"
+                    onPick=${(id) => { onTap(); Sfx.pop(); setWho(id); }} /></div>`
+            : html`<${Frag}>
+                <div className="flex items-center gap-3 mt-4">
+                  ${many && html`<button onClick=${() => { onTap(); Sfx.pop(); setWho(null); }}
+                      className="btn3d h-[3.25rem] pl-2 pr-4 rounded-full bg-white border-4 border-orange-100 flex items-center gap-2 text-[1.25rem] text-slate-600">
+                      <span className="text-[1.75rem]">${me.icon}</span>${me.name} <span className="text-slate-400 text-[1rem]">바꾸기</span></button>`}
+                  <p className="text-[1.75rem] text-slate-600">무엇을 써 볼까요?</p>
+                </div>
+                <div className="grid gap-4 w-full mt-5" style=${{ gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 8.5rem), 1fr))' }}>
+                  ${SUBJECTS.map((sub) => html`<button key=${sub.id} onClick=${() => onStart(sub.id, who)}
+                      className="chooser-card btn3d rounded-[2rem] text-white flex flex-col items-center justify-center gap-1 py-5 px-2 min-h-[11rem]"
+                      style=${{ background: sub.color, boxShadow: `0 8px 0 ${sub.shadow}` }}>
+                      <span className="text-[4.5rem] leading-none" style=${{ textShadow: '0 4px 0 rgba(0,0,0,.12)' }}>${sub.glyph}</span>
+                      <span className="text-[2rem] leading-none mt-1">${sub.label}</span>
+                      <span className="text-[1.0625rem] leading-none opacity-90">${sub.sub}</span>
+                      <span className="mt-1 px-3 py-1 rounded-full bg-white/25 text-[1rem]">⭐ ${starsFor(sub)}</span>
+                    </button>`)}
+                </div>
+              <//>`}
+          ${firstTime && html`<p className="text-[1.125rem] text-slate-400 mt-6">🔊 소리를 켜 주세요</p>`}
+        </div>
       </div>`;
   }
 
@@ -1577,11 +1694,13 @@
   }
 
   function App() {
-    const [started, setStarted] = useState(false);
+    const layout = useLayout();
+    const [subjectId, setSubjectId] = useState(null); // null → start screen (pick 한글/숫자/선 긋기)
+    const SUB = SUBJECTS.find((x) => x.id === subjectId) || SUBJECTS[0];
     const [tab, setTab] = useState('consonants');
     const [idx, setIdx] = useState({ lines: 0, consonants: 0, vowels: 0, words: 0, numbers: 0 });
     const [syl, setSyl] = useState(0);
-    const [pCat, setPCat] = useState(1);
+    const [pCat, setPCat] = useState(0);
     const [wTheme, setWTheme] = useState(0);
     const [pIdx, setPIdx] = useState(0);
     const [grid, setGrid] = useState(true);
@@ -1608,6 +1727,8 @@
     const doneRef = useRef(false);
     const timers = useRef([]);
     const penSeenRef = useRef(false);
+    const audioReady = useRef(false);
+    const introPrefix = useRef(null); // spoken before the first item after picking a subject
 
     useEffect(() => { Speech.setMuted(muted); Sfx.setMuted(muted); store.set('monggeul.muted', muted); }, [muted]);
     useEffect(() => { Speech.setPreferred(prefs.voice); Speech.setRate(prefs.rate); Clips.setSpeed(prefs.rate); Clips.setEnabled(prefs.clips !== false); store.set('monggeul.prefs', prefs); }, [prefs]);
@@ -1624,7 +1745,8 @@
     const isPractice = tab === 'practice';
     const tabList = tab === 'words' ? WORD_THEMES[wTheme].items : ITEMS[tab]; // 낱말: only the chosen theme
     const word = tab === 'words' ? tabList[idx.words] : null;
-    const pItems = PCATS[pCat].items;
+    const pList = PCATS.filter((c) => SUB.pcats.includes(c.id));
+    const pItems = (pList[pCat] || pList[0]).items;
     const current = isPractice ? pItems[pIdx] : word ? word.syllables[syl] : ITEMS[tab][idx[tab]];
     const pickerItems = isPractice ? pItems : tabList;
     const pickerActive = isPractice ? pIdx : idx[tab];
@@ -1697,25 +1819,40 @@
 
     // Speak the new item's prompt after every navigation
     useEffect(() => {
-      if (!started || !navId) return;
-      if (word && syl === 0) Speech.say(SAY.wordIntro(word, current));
-      else Speech.say(current.speak);
+      if (!subjectId || !navId) return;
+      const line = word && syl === 0 ? SAY.wordIntro(word, current) : current.speak;
+      Speech.say(introPrefix.current ? introPrefix.current + ' | ' + line : line);
+      introPrefix.current = null;
     }, [navId]);
 
     // ---- actions
-    function start(id) {
+    // iOS only allows sound after a tap: unlock once, from the first tap on the start screen.
+    function unlockAudio() {
+      if (audioReady.current) return;
+      audioReady.current = true;
       Sfx.unlock();
-      Sfx.pop();
       Speech.unlock();
       Clips.unlock();
-      Speech.say(SAY.welcome);
       Clips.preloadAll();
-      if (id && id !== profileId) {
-        Profiles.setActive(id);
-        setProfileId(id);
-        setProgress(Profiles.progress(id));
+    }
+    function startSubject(id, pid) {
+      unlockAudio();
+      Sfx.pop();
+      if (pid && pid !== profileId) {
+        Profiles.setActive(pid);
+        setProfileId(pid);
+        setProgress(Profiles.progress(pid));
       }
-      setStarted(true);
+      const sub = SUBJECTS.find((x) => x.id === id);
+      introPrefix.current = sub.intro;
+      navigate(() => { setSubjectId(id); setTab(sub.tabs[0]); setSyl(0); setReps(0); setPCat(0); setPIdx(0); });
+    }
+    function goHome() {
+      Sfx.pop();
+      clearTimers();
+      Speech.stop();
+      if (board.current) board.current.clear(false);
+      setSubjectId(null);
     }
     function selectTab(id) {
       Sfx.pop();
@@ -1836,33 +1973,34 @@
     }
 
     // ---- view pieces
+    const subTabs = SUB.tabs.map((id) => TABS.find((t) => t.id === id));
     const tabsView = html`
-      <nav className="grid gap-2.5 px-4 pb-1" style=${{ gridTemplateColumns: `repeat(${TABS.length}, minmax(0, 1fr))` }} role="tablist">
-        ${TABS.map((t) => {
+      <nav className="tabs grid gap-2.5 px-4 pb-1" style=${{ gridTemplateColumns: `repeat(${subTabs.length}, minmax(0, 1fr))` }} role="tablist">
+        ${subTabs.map((t) => {
           const on = t.id === tab;
           return html`<button key=${t.id} role="tab" aria-selected=${on} onClick=${() => selectTab(t.id)}
-              className="btn3d tab-btn min-w-0 rounded-3xl flex items-center justify-center gap-1.5 text-[21px] border-4"
+              className="btn3d tab-btn min-w-0 rounded-3xl flex items-center justify-center gap-1.5 text-[1.3125rem] border-4"
               style=${on ? { background: t.color, color: '#fff', borderColor: t.color, boxShadow: `0 6px 0 ${t.shadow}` }
                          : { background: '#fff', color: t.shadow, borderColor: '#FFEBD6' }}>
-              ${t.icon ? html`<${Icon} name=${t.icon} size=${26} />` : html`<span className="text-[26px] leading-none">${t.glyph}</span>`}
+              ${t.icon ? html`<${Icon} name=${t.icon} size=${26} />` : html`<span className="text-[1.625rem] leading-none">${t.glyph}</span>`}
               <span className="whitespace-nowrap">${t.label}</span>
             </button>`;
         })}
       </nav>`;
 
-    const catPills = isPractice ? html`
+    const catPills = isPractice ? (pList.length < 2 ? null : html`
       <div className="flex-none flex gap-2 pr-2 border-r-4 border-dashed border-violet-100">
-        ${PCATS.map((c, i) => html`<button key=${c.id} onClick=${() => pickCat(i)}
-            className="chip min-w-[66px] px-2 rounded-2xl text-[21px] border-4"
+        ${pList.map((c, i) => html`<button key=${c.id} onClick=${() => pickCat(i)}
+            className="chip min-w-[4.125rem] px-2 rounded-2xl text-[1.3125rem] border-4"
             style=${i === pCat ? { background: '#A78BFA', color: '#fff', borderColor: '#A78BFA' } : { background: '#fff', color: '#7C3AED', borderColor: '#EDE9FE' }}>${c.label}</button>`)}
-      </div>`
+      </div>`)
     : tab === 'words' ? html`
       <div className="flex-none flex gap-2 pr-2 border-r-4 border-dashed border-pink-100" role="tablist" aria-label="낱말 주제">
         ${WORD_THEMES.map((t, i) => html`<button key=${t.id} onClick=${() => pickTheme(i)} role="tab" aria-selected=${i === wTheme} aria-label=${t.label}
-            className="chip w-[70px] rounded-2xl border-4 flex flex-col items-center justify-center gap-1"
+            className="chip w-[4.375rem] rounded-2xl border-4 flex flex-col items-center justify-center gap-1"
             style=${i === wTheme ? { background: '#F472B6', color: '#fff', borderColor: '#F472B6' } : { background: '#fff', color: '#DB2777', borderColor: '#FCE7F3' }}>
-            <span className="text-[28px] leading-none">${t.icon}</span>
-            <span className="text-[14px] leading-none whitespace-nowrap">${t.label}</span>
+            <span className="text-[1.75rem] leading-none">${t.icon}</span>
+            <span className="text-[0.875rem] leading-none whitespace-nowrap">${t.label}</span>
           </button>`)}
       </div>`
     : null;
@@ -1870,17 +2008,17 @@
     // Model card: what to write
     let glyph, label;
     if (word) {
-      glyph = html`<span className="text-[66px] leading-none">${word.emoji}</span>`;
+      glyph = html`<span className="text-[4.125rem] leading-none">${word.emoji}</span>`;
       label = html`
         <div className="flex gap-2 flex-wrap">
           ${word.syllables.map((s, i) => {
             const isDone = i < syl || (i === syl && done);
             const on = i === syl;
             return html`<button key=${i} onClick=${() => pickSyllable(i)} aria-label=${s.glyph}
-                className="relative w-[60px] h-[60px] rounded-2xl text-[36px] leading-none grid place-items-center border-4"
+                className="relative w-[3.75rem] h-[3.75rem] rounded-2xl text-[2.25rem] leading-none grid place-items-center border-4"
                 style=${{ background: isDone ? '#DCFCE7' : on ? '#FFF7ED' : '#fff', borderColor: on ? '#FB923C' : isDone ? '#86EFAC' : '#F1F5F9', color: on ? '#EA580C' : '#4A3F5C' }}>
                 ${s.glyph}
-                ${isDone && html`<span className="absolute -top-2 -right-2 w-6 h-6 rounded-full bg-green-500 text-white text-[14px] grid place-items-center">✓</span>`}
+                ${isDone && html`<span className="absolute -top-2 -right-2 w-6 h-6 rounded-full bg-green-500 text-white text-[0.875rem] grid place-items-center">✓</span>`}
               </button>`;
           })}
         </div>`;
@@ -1888,26 +2026,26 @@
       const gSize = current.glyph && current.glyph.length >= 3 ? 40 : current.glyph && current.glyph.length === 2 ? 54 : 72;
       glyph = current.kind === 'line'
         ? html`<${MiniSvg} strokes=${current.strokes} size=${76} color="#FB923C" width=${0.07} />`
-        : html`<span className="leading-none text-orange-500" style=${{ fontSize: gSize }}>${current.glyph}</span>`;
+        : html`<span className="leading-none text-orange-500" style=${{ fontSize: gSize / 16 + 'rem' }}>${current.glyph}</span>`;
       label = html`<${Frag}>
-        <div className="text-[32px] leading-none">${current.name}</div>
+        <div className="text-[2rem] leading-none">${current.name}</div>
         ${current.kind === 'number'
           ? html`<${CountPicture} n=${current.count} />`
-          : current.kind !== 'line' && html`<div className="text-[22px] leading-none text-slate-500">${current.emoji} ${current.word}</div>`}
+          : current.kind !== 'line' && html`<div className="text-[1.375rem] leading-none text-slate-500">${current.emoji} ${current.word}</div>`}
       <//>`;
     }
 
     const filled = reps === 0 ? 0 : ((reps - 1) % 10) + 1;
     const trophies = Math.floor(reps / 10);
     const counter = isPractice && html`
-      <div className="counter rounded-[22px] bg-amber-50 px-4 py-2">
+      <div className="counter rounded-[1.375rem] bg-amber-50 px-4 py-2">
         <div className="flex items-center justify-between gap-3">
-          <div className="text-[32px] text-amber-500 leading-none whitespace-nowrap">⭐ × <span key=${reps} className="pop-in">${reps}</span></div>
-          ${trophies > 0 && html`<div className="text-[22px] text-amber-600 whitespace-nowrap">🏆 × ${trophies}</div>`}
+          <div className="text-[2rem] text-amber-500 leading-none whitespace-nowrap">⭐ × <span key=${reps} className="pop-in">${reps}</span></div>
+          ${trophies > 0 && html`<div className="text-[1.375rem] text-amber-600 whitespace-nowrap">🏆 × ${trophies}</div>`}
         </div>
         <div className="flex gap-0.5 mt-1.5">
           ${Array.from({ length: 10 }, (_, i) => html`<span key=${i + '-' + (i < filled ? reps : 0)}
-              className=${'text-[18px] leading-none ' + (i < filled ? 'pop-in' : '')}
+              className=${'text-[1.125rem] leading-none ' + (i < filled ? 'pop-in' : '')}
               style=${{ filter: i < filled ? 'none' : 'grayscale(1) opacity(.25)' }}>⭐</span>`)}
         </div>
       </div>`;
@@ -1924,11 +2062,11 @@
 
     const gridToggle = html`
       <button onClick=${toggleGrid} aria-pressed=${grid} aria-label="칸 도우미"
-          className="btn3d o5 flex-1 min-w-0 h-[64px] rounded-[22px] px-4 flex items-center justify-center gap-2 text-[21px] leading-none border-4"
+          className="btn3d o5 flex-1 min-w-0 h-[4rem] rounded-[1.375rem] px-4 flex items-center justify-center gap-2 text-[1.3125rem] leading-none border-4"
           style=${grid ? { background: '#F5F3FF', borderColor: '#C4B5FD', color: '#6D28D9' } : { background: '#fff', borderColor: '#E2E8F0', color: '#64748B' }}>
         <${Icon} name="Grid2x2" size=${26} />
         <span className="whitespace-nowrap">칸 도우미</span>
-        <span className="ml-1 px-2 py-1 rounded-full text-[15px] text-white" style=${{ background: grid ? '#8B5CF6' : '#94A3B8' }}>${grid ? 'ON' : 'OFF'}</span>
+        <span className="ml-1 px-2 py-1 rounded-full text-[0.9375rem] text-white" style=${{ background: grid ? '#8B5CF6' : '#94A3B8' }}>${grid ? 'ON' : 'OFF'}</span>
       </button>`;
 
     // Secondary actions are outlined, the one thing to do next is solid.
@@ -1943,7 +2081,7 @@
         </div>
         <div className="act-row">
           ${isPractice ? gridToggle : html`<${Frag}>
-            <${BigBtn} onClick=${prev} bg="#fff" fg="#64748B" border="#E2E8F0" icon="ChevronLeft" label="이전" className="w-[64px] flex-none !px-0 o3" />
+            <${BigBtn} onClick=${prev} bg="#fff" fg="#64748B" border="#E2E8F0" icon="ChevronLeft" label="이전" className="w-[4rem] flex-none !px-0 o3" />
             <${BigBtn} onClick=${next} bg="#A78BFA" icon="ChevronRight" label=${word ? '다음 낱말' : '다음'}
                        pulse=${done && (!word || wordDone)} className="flex-1 o5">${nextLabel}<//>
           <//>`}
@@ -1953,38 +2091,47 @@
         </div>
       </div>`;
 
-    // Crayons live in a vertical rail beside the paper (uses the spare width, keeps the bottom calm)
-    const rail = html`
-      <div className="rail soft" role="radiogroup" aria-label="크레파스 색깔">
+    // Crayons: a vertical rail beside the paper (uses spare width), or a row under it on narrow phones
+    const crayonsInRow = layout === 'tall-narrow';
+    const crayons = html`
+      <div className=${'rail soft ' + (crayonsInRow ? '!flex-row !py-1.5' : '')} role="radiogroup" aria-label="크레파스 색깔">
         ${CRAYONS.map((c) => html`<button key=${c} role="radio" aria-checked=${c === color} onClick=${() => { Sfx.pop(); setColor(c); }} aria-label="색깔"
-            className="w-[58px] h-[58px] rounded-full grid place-items-center transition-transform"
-            style=${{ background: c, transform: c === color ? 'scale(1)' : 'scale(.82)', boxShadow: c === color ? `0 0 0 4px #fff, 0 0 0 7px ${c}` : 'none' }}>
-            ${c === color && html`<${Icon} name="Check" size=${28} className="text-white" />`}
+            className="w-[3.625rem] h-[3.625rem] min-w-[42px] min-h-[42px] rounded-full grid place-items-center">
+            <span className="w-full h-full rounded-full grid place-items-center transition-transform"
+                  style=${{ background: c, transform: c === color ? 'scale(1)' : 'scale(.82)', boxShadow: c === color ? `0 0 0 4px #fff, 0 0 0 7px ${c}` : 'none' }}>
+              ${c === color && html`<${Icon} name="Check" size=${28} className="text-white" />`}
+            </span>
           </button>`)}
       </div>`;
 
     return html`
-      <div className="h-full flex flex-col"
+      <div className="app" data-layout=${layout}
            style=${{ paddingTop: 'env(safe-area-inset-top)', paddingBottom: 'env(safe-area-inset-bottom)', paddingLeft: 'env(safe-area-inset-left)', paddingRight: 'env(safe-area-inset-right)' }}>
-        <header className="flex items-center gap-3 px-5 pt-3 pb-3">
-          <div className="w-[56px] h-[56px] rounded-2xl grid place-items-center text-[34px] soft flex-none" style=${{ background: 'linear-gradient(135deg,#FECDD3,#FED7AA)' }}>🐣</div>
-          <h1 className="title-grad text-[28px] leading-none whitespace-nowrap">몽글몽글 한글 쓰기</h1>
+        <header className="topbar flex items-center gap-3 px-5 pt-3 pb-3 min-w-0">
+          <button onClick=${goHome} aria-label="처음으로 (과목 고르기)"
+                  className="btn3d w-[3.75rem] h-[3.75rem] rounded-2xl grid place-items-center text-white flex-none" style=${{ background: SUB.color }}>
+            <${Icon} name="House" size=${30} />
+          </button>
+          <h1 className="title-text min-w-0 truncate leading-none">
+            <span className="title-grad text-[1.75rem] whitespace-nowrap">몽글몽글 따라 쓰기</span>
+            <span className="block text-[1rem] text-slate-400 mt-1">${SUB.label}</span>
+          </h1>
           <div className="flex-1"></div>
           <button onClick=${() => { Sfx.pop(); setPickerOpen(true); }} aria-label=${`${profile.name}, 모은 별 ${total}개. 누르면 다른 친구로 바꿔요`}
-                  className="btn3d h-[60px] pl-2 pr-4 rounded-full bg-yellow-100 border-4 border-yellow-300 flex items-center gap-1.5 text-[24px] text-amber-600 flex-none">
-            <span className="w-[42px] h-[42px] rounded-full bg-white grid place-items-center text-[28px] leading-none">${profile.icon}</span>
+                  className="btn3d h-[3.75rem] pl-2 pr-4 rounded-full bg-yellow-100 border-4 border-yellow-300 flex items-center gap-1.5 text-[1.5rem] text-amber-600 flex-none">
+            <span className="w-[2.625rem] h-[2.625rem] rounded-full bg-white grid place-items-center text-[1.75rem] leading-none">${profile.icon}</span>
             <span>⭐</span><span key=${total} className="pop-in">${total}</span>
           </button>
           <button onClick=${() => { setMuted((m) => !m); }} aria-label=${muted ? '소리 켜기' : '소리 끄기'}
-                  className="btn3d w-[60px] h-[60px] rounded-full bg-white border-4 border-orange-100 grid place-items-center text-slate-500 flex-none">
+                  className="btn3d w-[3.75rem] h-[3.75rem] rounded-full bg-white border-4 border-orange-100 grid place-items-center text-slate-500 flex-none">
             <${Icon} name=${muted ? 'VolumeX' : 'Volume2'} size=${28} />
           </button>
           <button onClick=${() => { Sfx.pop(); setSettingsOpen(true); }} aria-label="설정"
-                  className="btn3d w-[60px] h-[60px] rounded-full bg-white border-4 border-orange-100 grid place-items-center text-slate-500 flex-none">
+                  className="btn3d w-[3.75rem] h-[3.75rem] rounded-full bg-white border-4 border-orange-100 grid place-items-center text-slate-500 flex-none">
             <${Icon} name="Settings" size=${28} />
           </button>
-          <button onClick=${refresh} className="btn3d h-[60px] px-5 rounded-full bg-orange-400 text-white text-[22px] flex items-center gap-2 flex-none">
-            <${Icon} name="RotateCcw" size=${26} /> 다시 쓰기
+          <button onClick=${refresh} aria-label="다시 쓰기" className="refresh-btn btn3d h-[3.75rem] min-w-[3.75rem] px-4 rounded-full bg-orange-400 text-white text-[1.375rem] flex items-center justify-center gap-2 flex-none">
+            <${Icon} name="RotateCcw" size=${26} /><span className="btn-label">다시 쓰기</span>
           </button>
         </header>
 
@@ -1996,33 +2143,35 @@
           <section className="info">${card}</section>
           <${Board} ref=${board} item=${current} session=${session} showGrid=${showGuide} showGuide=${showGuide}
                     color=${color} locked=${done} onSuccess=${onSuccess} penOnly=${penOnly} onPen=${onPen}
-                    rail=${rail} railWidth=${78}>
+                    rail=${crayonsInRow ? null : crayons} railRem=${crayonsInRow ? 0 : 4.875}>
             ${stamp > 0 && html`
               <div key=${stamp} className="stamp text-center">
-                <div className="text-[150px] leading-none" style=${{ filter: 'drop-shadow(0 8px 0 rgba(234,179,8,.35))' }}>⭐</div>
-                <div className="text-[36px] text-amber-500 whitespace-nowrap" style=${{ textShadow: '0 3px 0 #fff' }}>참 잘했어요!</div>
+                <div className="text-[9.375rem] leading-none" style=${{ filter: 'drop-shadow(0 8px 0 rgba(234,179,8,.35))' }}>⭐</div>
+                <div className="text-[2.25rem] text-amber-500 whitespace-nowrap" style=${{ textShadow: '0 3px 0 #fff' }}>참 잘했어요!</div>
               </div>`}
           <//>
+          ${crayonsInRow && html`<section className="crayon-row">${crayons}</section>`}
           <section className="controls">${controls}</section>
         </div>
 
-        ${toast && html`<div key=${toast} className="pop-in fixed left-1/2 top-6 -translate-x-1/2 z-40 px-6 py-3 rounded-full bg-slate-700/90 text-white text-[20px] shadow-lg whitespace-nowrap">${toast}</div>`}
+        ${toast && html`<div key=${toast} className="pop-in fixed left-1/2 top-6 -translate-x-1/2 z-40 px-6 py-3 rounded-full bg-slate-700/90 text-white text-[1.25rem] shadow-lg whitespace-nowrap">${toast}</div>`}
         ${pickerOpen && html`
           <div className="fixed inset-0 z-50 bg-slate-900/40 grid place-items-center p-6" onClick=${(e) => { if (e.target === e.currentTarget) setPickerOpen(false); }}>
-            <div className="bg-[#FFF8EE] rounded-[32px] p-8 max-w-[760px] shadow-2xl relative">
+            <div className="bg-[#FFF8EE] rounded-[2rem] p-8 max-w-[47.5rem] shadow-2xl relative">
               <button onClick=${() => { Sfx.pop(); setPickerOpen(false); }} aria-label="닫기"
-                      className="btn3d absolute top-4 right-4 w-[60px] h-[60px] rounded-full bg-white border-4 border-orange-100 grid place-items-center text-slate-500">
+                      className="btn3d absolute top-4 right-4 w-[3.75rem] h-[3.75rem] rounded-full bg-white border-4 border-orange-100 grid place-items-center text-slate-500">
                 <${Icon} name="X" size=${28} />
               </button>
               <${ProfilePicker} profiles=${profiles} activeId=${profileId} title="누가 쓸까요?"
                                 onPick=${(id) => { Sfx.pop(); setPickerOpen(false); switchProfile(id); }} />
-              <p className="text-[17px] text-slate-400 text-center mt-6">친구 추가·이름 바꾸기·별 기록 지우기는 ⚙️ 설정에서 할 수 있어요</p>
+              <p className="text-[1.0625rem] text-slate-400 text-center mt-6">친구 추가·이름 바꾸기·별 기록 지우기는 ⚙️ 설정에서 할 수 있어요</p>
             </div>
           </div>`}
         ${settingsOpen && html`<${Settings} prefs=${prefs} setPrefs=${setPrefs} penSeen=${penSeen} penOnly=${penOnly}
               profiles=${profiles} profileId=${profileId} ops=${profileOps}
               onClose=${() => { Sfx.pop(); setSettingsOpen(false); }} />`}
-        ${!started && html`<${Splash} onStart=${start} profiles=${profiles} activeId=${profileId} />`}
+        ${!subjectId && html`<${Chooser} profiles=${profiles} activeId=${profileId} progress=${progress}
+              firstTime=${!audioReady.current} onStart=${startSubject} onTap=${unlockAudio} />`}
       </div>`;
   }
 
@@ -2051,105 +2200,105 @@
     const Seg = ({ value, options, onPick }) => html`
       <div className="grid gap-2" style=${{ gridTemplateColumns: `repeat(${options.length}, 1fr)` }}>
         ${options.map(([v, text]) => html`<button key=${String(v)} onClick=${() => onPick(v)}
-            className="h-[60px] rounded-2xl border-4 text-[20px]"
+            className="h-[3.75rem] rounded-2xl border-4 text-[1.25rem]"
             style=${value === v ? { background: '#FFF7ED', borderColor: '#FB923C', color: '#C2410C' } : { background: '#fff', borderColor: '#F1F5F9', color: '#64748B' }}>${text}</button>`)}
       </div>`;
 
     return html`
       <div className="fixed inset-0 z-50 bg-slate-900/40 grid place-items-center p-6" onClick=${(e) => { if (e.target === e.currentTarget) onClose(); }}>
-        <div className="bg-[#FFF8EE] rounded-[32px] w-full max-w-[640px] max-h-[88vh] flex flex-col shadow-2xl">
+        <div className="bg-[#FFF8EE] rounded-[2rem] w-full max-w-[40rem] max-h-[88vh] flex flex-col shadow-2xl">
           <div className="flex items-center gap-3 px-6 pt-5 pb-3">
             <${Icon} name="Settings" size=${30} className="text-orange-400" />
-            <h2 className="text-[30px] flex-1">설정 <span className="text-[18px] text-slate-400">(어른용)</span></h2>
-            <button onClick=${onClose} aria-label="닫기" className="btn3d w-[60px] h-[60px] rounded-full bg-white border-4 border-orange-100 grid place-items-center text-slate-500">
+            <h2 className="text-[1.875rem] flex-1">설정 <span className="text-[1.125rem] text-slate-400">(어른용)</span></h2>
+            <button onClick=${onClose} aria-label="닫기" className="btn3d w-[3.75rem] h-[3.75rem] rounded-full bg-white border-4 border-orange-100 grid place-items-center text-slate-500">
               <${Icon} name="X" size=${28} />
             </button>
           </div>
 
           <div className="scroll-y px-6 pb-6 flex flex-col gap-6">
             <section>
-              <h3 className="text-[22px] mb-2">👧 아이 프로필 <span className="text-[16px] text-slate-400">(최대 ${MAX_PROFILES}명 · 별 기록은 이 iPad에만 저장돼요)</span></h3>
+              <h3 className="text-[1.375rem] mb-2">👧 아이 프로필 <span className="text-[1rem] text-slate-400">(최대 ${MAX_PROFILES}명 · 별 기록은 이 iPad에만 저장돼요)</span></h3>
               <div className="flex flex-col gap-2">
                 ${profiles.map((p) => html`<div key=${p.id} className="flex items-center gap-2 bg-white rounded-2xl p-2 border-4"
                       style=${{ borderColor: p.id === profileId ? '#FED7AA' : '#F8FAFC' }}>
                     <button onClick=${() => { Sfx.pop(); ops.nextIcon(p.id); }} aria-label="아이콘 바꾸기"
-                            className="w-[60px] h-[60px] rounded-2xl bg-orange-50 text-[38px] leading-none grid place-items-center flex-none">${p.icon}</button>
+                            className="w-[3.75rem] h-[3.75rem] rounded-2xl bg-orange-50 text-[2.375rem] leading-none grid place-items-center flex-none">${p.icon}</button>
                     <input type="text" value=${p.name} maxLength=${8} aria-label="이름"
                            onInput=${(e) => ops.rename(p.id, e.target.value)}
-                           className="flex-1 min-w-0 h-[56px] px-3 rounded-xl bg-slate-50 text-[22px] outline-none focus:ring-4 ring-orange-200" />
-                    <span className="text-[18px] text-amber-600 whitespace-nowrap px-1">⭐ ${starsOf(ops.progressOf(p.id))}</span>
-                    ${profiles.length > 1 && html`<${HoldButton} seconds=${3} onDone=${() => ops.remove(p.id)} className="h-[56px] px-3 text-[16px] flex-none">
+                           className="flex-1 min-w-0 h-[3.5rem] px-3 rounded-xl bg-slate-50 text-[1.375rem] outline-none focus:ring-4 ring-orange-200" />
+                    <span className="text-[1.125rem] text-amber-600 whitespace-nowrap px-1">⭐ ${starsOf(ops.progressOf(p.id))}</span>
+                    ${profiles.length > 1 && html`<${HoldButton} seconds=${3} onDone=${() => ops.remove(p.id)} className="h-[3.5rem] px-3 text-[1rem] flex-none">
                         <${Icon} name="Trash2" size=${20} /> 꾹 3초<//>`}
                   </div>`)}
                 ${profiles.length < MAX_PROFILES && html`<button onClick=${() => { Sfx.pop(); ops.add(); }}
-                    className="h-[60px] rounded-2xl border-4 border-dashed border-orange-200 text-orange-500 text-[20px] flex items-center justify-center gap-2">
+                    className="h-[3.75rem] rounded-2xl border-4 border-dashed border-orange-200 text-orange-500 text-[1.25rem] flex items-center justify-center gap-2">
                     <${Icon} name="Plus" size=${24} /> 새 친구 추가</button>`}
               </div>
-              <p className="text-[15px] text-slate-400 mt-2">동물을 누르면 아이콘이 바뀌어요. 프로필 삭제는 휴지통 버튼을 3초 동안 꾹 누르세요.</p>
+              <p className="text-[0.9375rem] text-slate-400 mt-2">동물을 누르면 아이콘이 바뀌어요. 프로필 삭제는 휴지통 버튼을 3초 동안 꾹 누르세요.</p>
             </section>
 
             <section>
-              <h3 className="text-[22px] mb-2">⭐ 별 기록 지우기</h3>
+              <h3 className="text-[1.375rem] mb-2">⭐ 별 기록 지우기</h3>
               ${profiles.length > 1 && html`<div className="flex gap-2 mb-3 flex-wrap">
                 ${profiles.map((p) => html`<button key=${p.id} onClick=${() => { Sfx.pop(); setResetFor(p.id); }}
-                    className="h-[52px] px-3 rounded-2xl border-4 text-[19px] flex items-center gap-1"
+                    className="h-[3.25rem] px-3 rounded-2xl border-4 text-[1.1875rem] flex items-center gap-1"
                     style=${p.id === resetProfile.id ? { background: '#FFF7ED', borderColor: '#FB923C' } : { background: '#fff', borderColor: '#F1F5F9' }}>
-                    <span className="text-[26px]">${p.icon}</span>${p.name}</button>`)}
+                    <span className="text-[1.625rem]">${p.icon}</span>${p.name}</button>`)}
               </div>`}
               <div className="grid grid-cols-3 gap-2">
                 <${HoldButton} onDone=${() => ops.resetStars(resetProfile.id, null)} disabled=${!starsOf(resetProgress)}
-                               className="col-span-3 h-[60px] text-[20px]">
+                               className="col-span-3 h-[3.75rem] text-[1.25rem]">
                   <${Icon} name="Trash2" size=${22} /> ${resetProfile.icon} ${resetProfile.name} 별 모두 지우기 (⭐ ${starsOf(resetProgress)})
                 <//>
                 ${STAR_CATS.map(([cat, label]) => html`<${HoldButton} key=${cat} onDone=${() => ops.resetStars(resetProfile.id, cat)}
-                    disabled=${!starsOf(resetProgress, cat)} className="h-[60px] text-[18px]">
+                    disabled=${!starsOf(resetProgress, cat)} className="h-[3.75rem] text-[1.125rem]">
                     ${label} <span className="text-amber-600">⭐ ${starsOf(resetProgress, cat)}</span>
                   <//>`)}
               </div>
-              <p className="text-[15px] text-slate-400 mt-2">아이가 실수로 지우지 않도록, 버튼을 <b>3초 동안 꾹</b> 눌러야 지워져요.</p>
+              <p className="text-[0.9375rem] text-slate-400 mt-2">아이가 실수로 지우지 않도록, 버튼을 <b>3초 동안 꾹</b> 눌러야 지워져요.</p>
             </section>
 
             <section>
-              <h3 className="text-[22px] mb-2">🎙️ AI 음성 파일</h3>
+              <h3 className="text-[1.375rem] mb-2">🎙️ AI 음성 파일</h3>
               ${clipInfo
                 ? html`<${Frag}>
                     <${Seg} value=${prefs.clips !== false} onPick=${(v) => set({ clips: v })}
                             options=${[[true, 'AI 음성 사용'], [false, '기기 음성 사용']]} />
-                    <p className="text-[16px] text-slate-500 mt-2">${clipInfo.count}개 문장 · 목소리 ${clipInfo.voice}. 파일이 없는 문장만 아래 기기 음성으로 말해요.</p>
+                    <p className="text-[1rem] text-slate-500 mt-2">${clipInfo.count}개 문장 · 목소리 ${clipInfo.voice}. 파일이 없는 문장만 아래 기기 음성으로 말해요.</p>
                   <//>`
-                : html`<p className="text-[17px] text-slate-500">아직 AI 음성 파일이 없어서 아래 기기 음성으로 말해요.</p>`}
+                : html`<p className="text-[1.0625rem] text-slate-500">아직 AI 음성 파일이 없어서 아래 기기 음성으로 말해요.</p>`}
             </section>
 
             <section>
-              <h3 className="text-[22px] mb-2">🗣️ 기기 음성 <span className="text-[16px] text-slate-400">(AI 음성 파일이 없을 때)</span></h3>
-              ${!Speech.supported && html`<p className="text-[18px] text-red-500">이 브라우저는 음성 기능을 지원하지 않아요.</p>`}
+              <h3 className="text-[1.375rem] mb-2">🗣️ 기기 음성 <span className="text-[1rem] text-slate-400">(AI 음성 파일이 없을 때)</span></h3>
+              ${!Speech.supported && html`<p className="text-[1.125rem] text-red-500">이 브라우저는 음성 기능을 지원하지 않아요.</p>`}
               <div className="flex flex-col gap-2">
                 <button onClick=${() => set({ voice: null })}
-                    className="h-[64px] rounded-2xl border-4 px-4 flex items-center gap-3 text-[20px] text-left"
+                    className="h-[4rem] rounded-2xl border-4 px-4 flex items-center gap-3 text-[1.25rem] text-left"
                     style=${prefs.voice === null ? { background: '#FFF7ED', borderColor: '#FB923C' } : { background: '#fff', borderColor: '#F1F5F9' }}>
-                  <span className="flex-1">자동 선택 <span className="text-slate-400 text-[16px]">(가장 좋은 목소리)</span></span>
+                  <span className="flex-1">자동 선택 <span className="text-slate-400 text-[1rem]">(가장 좋은 목소리)</span></span>
                 </button>
                 ${voices.map((v) => {
                   const chosen = prefs.voice === v.uri;
                   const inUse = current === v.uri;
                   return html`<div key=${v.uri} className="flex gap-2">
                     <button onClick=${() => set({ voice: v.uri })}
-                        className="flex-1 min-w-0 h-[64px] rounded-2xl border-4 px-4 flex items-center gap-2 text-[20px] text-left"
+                        className="flex-1 min-w-0 h-[4rem] rounded-2xl border-4 px-4 flex items-center gap-2 text-[1.25rem] text-left"
                         style=${chosen ? { background: '#FFF7ED', borderColor: '#FB923C' } : { background: '#fff', borderColor: '#F1F5F9' }}>
                       <span className="truncate">${v.name}</span>
-                      ${v.quality && html`<span className="flex-none px-2 py-0.5 rounded-full bg-violet-100 text-violet-600 text-[15px]">${v.quality}</span>`}
-                      ${inUse && html`<span className="flex-none ml-auto px-2 py-0.5 rounded-full bg-green-100 text-green-700 text-[15px]">사용 중</span>`}
+                      ${v.quality && html`<span className="flex-none px-2 py-0.5 rounded-full bg-violet-100 text-violet-600 text-[0.9375rem]">${v.quality}</span>`}
+                      ${inUse && html`<span className="flex-none ml-auto px-2 py-0.5 rounded-full bg-green-100 text-green-700 text-[0.9375rem]">사용 중</span>`}
                     </button>
                     <button onClick=${() => sample(v.uri)} aria-label=${v.name + ' 미리 듣기'}
-                        className="btn3d flex-none w-[64px] h-[64px] rounded-2xl bg-sky-400 text-white grid place-items-center">
+                        className="btn3d flex-none w-[4rem] h-[4rem] rounded-2xl bg-sky-400 text-white grid place-items-center">
                       <${Icon} name="Play" size=${26} />
                     </button>
                   </div>`;
                 })}
-                ${Speech.supported && voices.length === 0 && html`<p className="text-[18px] text-slate-500">한국어 목소리를 찾는 중이에요… 잠시 뒤 다시 열어 주세요.</p>`}
+                ${Speech.supported && voices.length === 0 && html`<p className="text-[1.125rem] text-slate-500">한국어 목소리를 찾는 중이에요… 잠시 뒤 다시 열어 주세요.</p>`}
               </div>
               ${!hasPremium && html`
-                <div className="mt-3 rounded-2xl bg-white p-4 text-[17px] leading-relaxed text-slate-600">
+                <div className="mt-3 rounded-2xl bg-white p-4 text-[1.0625rem] leading-relaxed text-slate-600">
                   <b>Yuna 프리미엄/향상됨</b>이 목록에 없나요?<br/>
                   ① iPad <b>설정 → 손쉬운 사용 → 읽기 및 말하기 → 음성 → 한국어</b>에서 Yuna (프리미엄)을 내려받고<br/>
                   ② 이 앱(또는 Safari)을 앱 전환기에서 <b>완전히 닫았다가</b> 다시 열어 주세요.<br/>
@@ -2159,29 +2308,29 @@
 
             <section>
               <div className="flex items-baseline gap-3 mb-1">
-                <h3 className="text-[22px] flex-1">🐢 말 빠르기</h3>
-                <span className="text-[30px] text-orange-500 tabular-nums">${prefs.rate.toFixed(2)}</span>
+                <h3 className="text-[1.375rem] flex-1">🐢 말 빠르기</h3>
+                <span className="text-[1.875rem] text-orange-500 tabular-nums">${prefs.rate.toFixed(2)}</span>
               </div>
               <div className="flex items-center gap-3">
-                <span className="text-[30px]" aria-hidden="true">🐢</span>
+                <span className="text-[1.875rem]" aria-hidden="true">🐢</span>
                 <input type="range" className="big-range flex-1" min="0.5" max="1" step="0.05" value=${prefs.rate}
                        aria-label="말 빠르기" aria-valuetext=${prefs.rate.toFixed(2)}
                        onChange=${(e) => { const r = Number(e.target.value); Speech.setRate(r); Clips.setSpeed(r); setPrefs((p) => ({ ...p, rate: r })); }}
                        onPointerUp=${() => Speech.say(ITEMS.consonants[0].speak)}
                        onKeyUp=${() => Speech.say(ITEMS.consonants[0].speak)} />
-                <span className="text-[30px]" aria-hidden="true">🐇</span>
+                <span className="text-[1.875rem]" aria-hidden="true">🐇</span>
               </div>
-              <div className="flex justify-between text-[15px] text-slate-400 px-12">
+              <div className="flex justify-between text-[0.9375rem] text-slate-400 px-12">
                 <span>0.5 아주 천천히</span><span>0.75</span><span>1.0 보통 빠르기</span>
               </div>
-              <p className="text-[16px] text-slate-500 mt-1">손을 떼면 그 빠르기로 들려줘요. AI 음성은 목소리 높이는 그대로, 빠르기만 바뀌어요.</p>
+              <p className="text-[1rem] text-slate-500 mt-1">손을 떼면 그 빠르기로 들려줘요. AI 음성은 목소리 높이는 그대로, 빠르기만 바뀌어요.</p>
             </section>
 
             <section>
-              <h3 className="text-[22px] mb-2">✏️ 펜슬 전용 모드 <span className="text-[16px] text-slate-400">(손바닥 무시)</span></h3>
+              <h3 className="text-[1.375rem] mb-2">✏️ 펜슬 전용 모드 <span className="text-[1rem] text-slate-400">(손바닥 무시)</span></h3>
               <${Seg} value=${prefs.pen} onPick=${(v) => set({ pen: v })}
                       options=${[['auto', '자동'], ['on', '항상 켜기'], ['off', '끄기']]} />
-              <p className="text-[16px] text-slate-500 mt-2 leading-relaxed">
+              <p className="text-[1rem] text-slate-500 mt-2 leading-relaxed">
                 자동: 애플 펜슬을 한 번 쓰면 그때부터 손가락·손바닥으로는 그려지지 않아요.
                 손가락으로 쓰려면 <b>끄기</b>를 고르세요. (지금: <b>${penOnly ? '켜짐' : '꺼짐'}</b>${prefs.pen === 'auto' && !penSeen ? ', 아직 펜슬을 쓰지 않았어요' : ''})
               </p>

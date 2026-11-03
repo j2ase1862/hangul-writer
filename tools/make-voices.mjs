@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// 몽글몽글 한글 쓰기 — make natural AI voice files with Google Cloud Text-to-Speech.
+// 몽글몽글 따라 쓰기 — make natural AI voice files with Google Cloud Text-to-Speech.
 //
 // The app speaks a fixed set of sentences. This script reads them straight out of index.html
 // (the block between @@VOICE-DATA-START / @@VOICE-DATA-END), asks Google TTS to say each one,

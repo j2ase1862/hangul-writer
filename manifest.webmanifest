@@ -1,7 +1,7 @@
 {
-  "name": "몽글몽글 한글 쓰기",
-  "short_name": "한글 쓰기",
-  "description": "5살 아이를 위한 한글·숫자 따라 쓰기 (iPad · 애플 펜슬)",
+  "name": "몽글몽글 따라 쓰기",
+  "short_name": "따라 쓰기",
+  "description": "아이를 위한 한글·숫자·선 긋기 따라 쓰기 (애플 펜슬·손가락)",
   "lang": "ko",
   "start_url": "./",
   "scope": "./",

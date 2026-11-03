@@ -1,4 +1,4 @@
-// 몽글몽글 한글 쓰기 — offline support (service worker).
+// 몽글몽글 따라 쓰기 — offline support (service worker).
 //
 // After the first visit everything the app needs is kept on the device, so it opens and talks
 // without internet:
@@ -7,7 +7,7 @@
 //   VOICE audio/*.mp3 (AI voice files)         → cache first; flushed when audio/manifest.json
 //                                                 says the voice files were regenerated
 // Bump VERSION when this file's logic changes.
-const VERSION = 'v1';
+const VERSION = 'v2';
 const APP = 'monggeul-app-' + VERSION;
 const LIBS = 'monggeul-libs-v1';
 const VOICE = 'monggeul-voice-v1';
@@ -99,7 +99,7 @@ self.addEventListener('fetch', (event) => {
     } else if (/\/audio\/[0-9a-f]{8}\.mp3$/.test(url.pathname)) {
       event.respondWith(cacheFirst(req, VOICE));
     } else {
-      event.respondWith(cacheFirst(req, APP));
+      event.respondWith(networkFirst(req, APP)); // manifest, icons: pick up renames/new icons when online
     }
     return;
   }
@@ -119,10 +119,10 @@ async function networkFirst(req, name, fallbackUrl) {
   const cache = await caches.open(name);
   try {
     const res = await withTimeout(fetch(req), 4000);
-    if (res.ok) cache.put(fallbackUrl, res.clone());
+    if (res.ok) cache.put(fallbackUrl || req, res.clone());
     return res;
   } catch (e) {
-    return (await cache.match(req, { ignoreSearch: true })) || (await cache.match(fallbackUrl)) || Response.error();
+    return (await cache.match(req, { ignoreSearch: true })) || (fallbackUrl && (await cache.match(fallbackUrl))) || Response.error();
   }
 }
 
