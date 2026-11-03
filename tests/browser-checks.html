@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>몽글몽글 따라 쓰기 · 브라우저 검사</title>
+<style>
+  :root { --ok: #15803d; --bad: #b91c1c; --muted: #64748b; --line: #e2e8f0; }
+  body { font: 15px/1.5 system-ui, -apple-system, 'Segoe UI', sans-serif; margin: 0; padding: 24px; background: #f8fafc; color: #0f172a; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  p.lead { color: var(--muted); margin: 0 0 20px; }
+  section { background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; margin-bottom: 18px; max-width: 1100px; }
+  h2 { font-size: 17px; margin: 0 0 6px; }
+  button { font: inherit; padding: 8px 16px; border-radius: 8px; border: 1px solid #94a3b8; background: #fff; cursor: pointer; }
+  button:disabled { opacity: .5; cursor: default; }
+  table { border-collapse: collapse; width: 100%; margin-top: 12px; font-size: 14px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; }
+  .ok { color: var(--ok); } .bad { color: var(--bad); font-weight: 600; } .muted { color: var(--muted); }
+  .summary { margin-top: 10px; font-weight: 600; }
+  #stage { position: absolute; left: -10000px; top: 0; }
+</style>
+</head>
+<body>
+<h1>몽글몽글 따라 쓰기 · 브라우저 검사</h1>
+<p class="lead">진짜 브라우저가 있어야 하는 검사 두 가지예요. (판정·앱 동작 시험은 <code>npm test</code>)</p>
+
+<section>
+  <h2>1. 화면 배치 검사</h2>
+  <div class="muted">폰·태블릿·폴더블·노트북·데스크톱 17가지 크기 × 과목 4개에서, 화면 밖으로 나간 버튼 / 쓰기 칸을 가리는 버튼 / 40px보다 작은 버튼이 없는지 확인해요. (1~2분)</div>
+  <p><button id="runLayout">화면 배치 검사 시작</button></p>
+  <div id="layoutSummary" class="summary"></div>
+  <table id="layoutTable" hidden><thead><tr><th>화면</th><th>크기</th><th>배치</th><th>쓰기 칸</th><th>한글</th><th>숫자</th><th>영어</th><th>선 긋기</th></tr></thead><tbody></tbody></table>
+</section>
+
+<section>
+  <h2>2. 음성 파일 검사</h2>
+  <div class="muted">앱이 말하는 모든 문장 조각에 음성 파일이 있는지, 파일마다 실제 소리가 들어 있는지(무음 아님), 안 쓰는 파일이 남아 있지 않은지 확인해요.</div>
+  <p><button id="runAudio">음성 파일 검사 시작</button></p>
+  <div id="audioSummary" class="summary"></div>
+  <table id="audioTable" hidden><thead><tr><th>문제</th><th>문장 조각</th></tr></thead><tbody></tbody></table>
+</section>
+
+<div id="stage"></div>
+
+<script>
+'use strict';
+const APP = '../';
+const DEVICES = [
+  ['iPhone 17 Pro', 402, 874], ['iPhone 17 Pro 가로', 874, 402], ['iPhone SE', 375, 667], ['작은 폰', 320, 568], ['작은 폰 가로', 667, 320],
+  ['Galaxy S24', 360, 780], ['Galaxy S24 가로', 780, 360], ['폴더블(안쪽)', 673, 841], ['iPad mini', 744, 1133],
+  ['iPad 11형', 834, 1194], ['iPad 11형 가로', 1194, 834], ['iPad 13형', 1024, 1366], ['iPad 13형 가로', 1366, 1024],
+  ['Galaxy Tab', 800, 1280], ['Galaxy Tab 가로', 1280, 800], ['노트북', 1440, 900], ['데스크톱', 1920, 1080],
+];
+const SUBJECTS = ['한글', '숫자', '영어', '선 긋기'];
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+
+// Load the app in one hidden iframe of the given size, enter a subject, and measure.
+async function measure(w, h, subject) {
+  const stage = document.getElementById('stage');
+  const f = document.createElement('iframe');
+  f.style.cssText = `width:${w}px;height:${h}px;border:0`;
+  f.src = APP;
+  stage.appendChild(f);
+  try {
+    let d = null;
+    for (let i = 0; i < 60; i++) { d = f.contentDocument; if (d && d.querySelector('.fixed.scroll-y button')) break; await sleep(250); }
+    const card = [...d.querySelectorAll('.fixed.scroll-y button')].find((b) => b.textContent.includes(subject));
+    const vw = d.documentElement.clientWidth, vh = d.documentElement.clientHeight;
+    const startOff = [...d.querySelectorAll('.fixed.scroll-y button')].filter((b) => b.getBoundingClientRect().bottom > vh + 1).length;
+    card.click();
+    await sleep(700);
+    const pad = d.querySelector('.pad').getBoundingClientRect();
+    const name = (b) => (b.getAttribute('aria-label') || b.textContent.trim() || '?').slice(0, 10);
+    const buttons = [...d.querySelectorAll('button')].filter((b) => b.getBoundingClientRect().width);
+    const off = buttons.filter((b) => !b.closest('.scroll-x')).filter((b) => { const r = b.getBoundingClientRect(); return r.right > vw + 1 || r.bottom > vh + 1 || r.left < -1 || r.top < -1; }).map(name);
+    const over = buttons.filter((b) => !b.closest('.pad')).filter((b) => { const r = b.getBoundingClientRect(); return r.left < pad.right - 2 && r.right > pad.left + 2 && r.top < pad.bottom - 2 && r.bottom > pad.top + 2; }).map(name);
+    const small = [...d.querySelectorAll('.controls button, .topbar button, .tabs button, .rail button')].filter((b) => { const r = b.getBoundingClientRect(); return r.width && (r.height < 40 || r.width < 40); }).map(name);
+    const problems = [];
+    if (startOff) problems.push(`시작 화면 카드 ${startOff}개 잘림`);
+    if (off.length) problems.push('화면 밖: ' + off.join(', '));
+    if (over.length) problems.push('쓰기 칸 가림: ' + over.join(', '));
+    if (small.length) problems.push('너무 작음: ' + small.join(', '));
+    return { layout: d.querySelector('.app').dataset.layout, paper: Math.round(pad.width), problems };
+  } catch (e) {
+    return { layout: '?', paper: 0, problems: ['불러오지 못함: ' + e.message] };
+  } finally {
+    f.remove();
+  }
+}
+
+document.getElementById('runLayout').onclick = async (ev) => {
+  ev.target.disabled = true;
+  const tbody = document.querySelector('#layoutTable tbody');
+  document.getElementById('layoutTable').hidden = false;
+  tbody.innerHTML = '';
+  let bad = 0, done = 0;
+  for (const [label, w, h] of DEVICES) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${esc(label)}</td><td>${w}×${h}</td><td>…</td><td></td>` + SUBJECTS.map(() => '<td>…</td>').join('');
+    tbody.appendChild(tr);
+    for (let i = 0; i < SUBJECTS.length; i++) {
+      document.getElementById('layoutSummary').textContent = `검사 중… ${++done}/${DEVICES.length * SUBJECTS.length}`;
+      const r = await measure(w, h, SUBJECTS[i]);
+      tr.children[2].textContent = r.layout;
+      tr.children[3].textContent = r.paper + 'px';
+      tr.children[4 + i].innerHTML = r.problems.length ? `<span class="bad">❌ ${esc(r.problems.join(' / '))}</span>` : '<span class="ok">✅</span>';
+      if (r.problems.length) bad++;
+    }
+  }
+  const s = document.getElementById('layoutSummary');
+  s.className = 'summary ' + (bad ? 'bad' : 'ok');
+  s.textContent = bad ? `❌ ${bad}곳에서 문제가 있어요 (표 참고)` : `✅ ${DEVICES.length}가지 화면 × ${SUBJECTS.length}개 과목 모두 문제없음`;
+  ev.target.disabled = false;
+};
+
+document.getElementById('runAudio').onclick = async (ev) => {
+  ev.target.disabled = true;
+  const s = document.getElementById('audioSummary');
+  const tbody = document.querySelector('#audioTable tbody');
+  tbody.innerHTML = '';
+  const rows = [];
+  try {
+    // the sentences the app says — straight from index.html's data block
+    const html = (await (await fetch(APP + 'index.html', { cache: 'no-store' })).text()).replace(/\r\n/g, '\n');
+    const block = html.match(/\/\* @@VOICE-DATA-START[^*]*\*\/([\s\S]*?)\/\* @@VOICE-DATA-END \*\//)[1];
+    const { phrases, phraseId } = new Function(block + '\nreturn { phrases: buildPhrases(), phraseId };')();
+    const m = await (await fetch(APP + 'audio/manifest.json', { cache: 'no-store' })).json();
+    const ids = new Set(phrases.map(phraseId));
+    for (const t of phrases) if (!m.clips[phraseId(t)]) rows.push(['파일 없음 (기기 음성으로 말해요)', t]);
+    for (const [id, t] of Object.entries(m.clips)) if (!ids.has(id)) rows.push(['안 쓰는 파일', t]);
+    const ctx = new OfflineAudioContext(1, 24000, 24000);
+    const entries = Object.entries(m.clips).filter(([id]) => ids.has(id));
+    let i = 0;
+    for (const [id, text] of entries) {
+      s.textContent = `소리 확인 중… ${++i}/${entries.length}`;
+      try {
+        const buf = await ctx.decodeAudioData(await (await fetch(`${APP}audio/${id}.mp3`, { cache: 'no-store' })).arrayBuffer());
+        const d = buf.getChannelData(0);
+        let peak = 0, voiced = 0;
+        for (let k = 0; k < d.length; k++) { const a = Math.abs(d[k]); if (a > peak) peak = a; if (a > 0.02) voiced++; }
+        if (peak < 0.05 || voiced / buf.sampleRate < 0.08) rows.push(['무음 (소리가 거의 없음)', text]);
+      } catch (e) { rows.push(['파일을 열 수 없음', text]); }
+    }
+    s.className = 'summary ' + (rows.length ? 'bad' : 'ok');
+    s.textContent = rows.length ? `❌ ${rows.length}건 확인이 필요해요` : `✅ 문장 조각 ${phrases.length}개 모두 음성 파일 있음, 무음 없음 (목소리: ${m.voice}${m.voiceEn ? ' / ' + m.voiceEn : ''})`;
+  } catch (e) {
+    s.className = 'summary bad';
+    s.textContent = '❌ 검사를 할 수 없었어요: ' + e.message;
+  }
+  document.getElementById('audioTable').hidden = !rows.length;
+  for (const [what, text] of rows) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td class="bad">${esc(what)}</td><td>${esc(text)}</td>`;
+    tbody.appendChild(tr);
+  }
+  ev.target.disabled = false;
+};
+</script>
+</body>
+</html>

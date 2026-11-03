@@ -1,2 +1,5 @@
 # Voice samples made by `node tools/make-voices.mjs samples` (for choosing a voice; not used by the app)
 audio-samples/
+
+# npm (test tools only — the app itself has no build step)
+node_modules/

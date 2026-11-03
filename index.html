@@ -1208,6 +1208,14 @@
       return false;
     };
     const frac = (pts, test) => { let h = 0; for (const p of pts) if (test(p)) h++; return h / pts.length; };
+    const smoothLen = (pts) => {
+      const sm = pts.map((_, i) => {
+        let x = 0, y = 0, n = 0;
+        for (let k = Math.max(0, i - 3); k <= Math.min(pts.length - 1, i + 3); k++) { x += pts[k][0]; y += pts[k][1]; n++; }
+        return [x / n, y / n];
+      });
+      return pathLen(sm);
+    };
 
     // how much of each drawn stroke lies on the guide (stray check)
     const prec = us.map((u) => frac(u, (p) => near(p, allG, tp)));
@@ -1246,13 +1254,15 @@
       const allInk = [].concat(...us);
       const joined = gs.every((g) => frac(g, (p) => near(p, allInk, tc)) >= T.own);
       const dotMissing = per.some((v, i) => isDot[i] && v < T.own); // dots always need their own mark
-      // English letters are often written in one go (a, d, n…) — fine there (not in 한글), but only if the
+      if (!joined || dotMissing) return res(false, 'missing', coveredIdx);
+      if (!allowJoined) return res(false, 'joined', coveredIdx); // 한글·숫자: one stroke at a time
+      // English letters are often written in one go (a, d, n…) — fine, but only if the
       // ink runs right ALONG every stroke, not just past the ends of other strokes (E without its stem)
       const tracedTight = gs.every((g) => frac(g, (p) => near(p, allInk, tc * 0.5)) >= (lenient ? 0.7 : 0.75));
       // …and the drawn line that "absorbs" a stroke must be long enough to have drawn it too: a bare "o"
       // is not a joined "a" (the stick of "a" runs along the circle, so position alone can't tell them apart).
       // groupLen[k] = ink of the drawn pieces owned by guide stroke k; need[k] = guide length it must account for.
-      const groupLen = gs.map((_, k) => us.reduce((a, u, j) => a + (owner[j] === k ? pathLen(u) : 0), 0));
+      const groupLen = gs.map((_, k) => us.reduce((a, u, j) => a + (owner[j] === k ? smoothLen(u) : 0), 0));
       const need = gs.map((_, k) => (per[k] >= T.own ? pathLen(guide[k]) : 0));
       let enoughInk = true;
       gs.forEach((g, i) => {
@@ -1263,8 +1273,7 @@
         need[owner[bj]] += pathLen(guide[i]);
       });
       if (!gs.every((_, k) => need[k] === 0 || groupLen[k] >= 0.85 * need[k])) enoughInk = false;
-      const ok = joined && allowJoined && !dotMissing && tracedTight && enoughInk;
-      if (!ok) return res(false, joined && !dotMissing && tracedTight && enoughInk ? 'joined' : 'missing', coveredIdx);
+      if (!tracedTight || !enoughInk) return res(false, 'missing', coveredIdx);
     }
     const allInk = [].concat(...us);
     if (frac(allG, (p) => near(p, allInk, tc)) < T.total) return res(false, 'shape', coveredIdx);
