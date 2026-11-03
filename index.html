@@ -10,7 +10,15 @@
 <meta name="format-detection" content="telephone=no" />
 <meta name="theme-color" content="#FFF8EE" />
 <title>몽글몽글 한글 쓰기</title>
-<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🐣</text></svg>" />
+<link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png" />
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+<link rel="manifest" href="manifest.webmanifest" />
+<!-- Offline support: keep the app, libraries, font and voice files on the device after the first visit -->
+<script>
+  if ('serviceWorker' in navigator && (location.protocol === 'https:' || /^(localhost|127\.0\.0\.1)$/.test(location.hostname))) {
+    window.addEventListener('load', function () { navigator.serviceWorker.register('./sw.js').catch(function () {}); });
+  }
+</script>
 
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -52,6 +60,7 @@
   #root { height: 100%; }
   /* touch-action:none on buttons → a tap can never be re-interpreted as a pan (which cancels Pencil taps) */
   button { font-family: inherit; touch-action: none; cursor: pointer; }
+  input[type=text] { font-family: inherit; -webkit-user-select: text; user-select: text; touch-action: manipulation; }
   .scroll-x button { touch-action: pan-x; }
   .scroll-y button { touch-action: pan-y; }
   .scroll-y { overflow-y: auto; touch-action: pan-y; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
@@ -246,7 +255,7 @@
   let lastTouchEnd = 0;
   document.addEventListener('touchend', (e) => {
     const now = Date.now();
-    if (now - lastTouchEnd < 320 && !(e.target.closest && e.target.closest('button'))) e.preventDefault();
+    if (now - lastTouchEnd < 320 && !(e.target.closest && e.target.closest('button, input, textarea'))) e.preventDefault();
     lastTouchEnd = now;
   }, { passive: false });
 
@@ -1450,17 +1459,103 @@
       </div>`;
   }
 
-  function Splash({ onStart }) {
+  // ---------------------------------------------------------------------------
+  // Child profiles: stars are kept per child, only on this device (nothing leaves the iPad).
+  // ---------------------------------------------------------------------------
+  const AVATARS = ['🐰', '🐻', '🐱', '🐶', '🦊', '🐼', '🐯', '🐸'];
+  const MAX_PROFILES = 4;
+  const Profiles = {
+    load() {
+      let list = store.get('monggeul.profiles', null);
+      if (!Array.isArray(list) || !list.length) {
+        list = [{ id: 'p1', name: '우리 아이', icon: '🐰' }];
+        const old = store.get('monggeul.progress', null); // stars saved before profiles existed
+        if (old) store.set('monggeul.progress.p1', old);
+        store.set('monggeul.profiles', list);
+      }
+      return list;
+    },
+    save: (list) => store.set('monggeul.profiles', list),
+    activeId(list) { const id = store.get('monggeul.activeProfile', null); return list.some((p) => p.id === id) ? id : list[0].id; },
+    setActive: (id) => store.set('monggeul.activeProfile', id),
+    progress: (id) => store.get('monggeul.progress.' + id, {}),
+    saveProgress: (id, p) => store.set('monggeul.progress.' + id, p),
+    drop(id) { try { localStorage.removeItem('monggeul.progress.' + id); } catch (e) {} },
+  };
+  // Which tab a star belongs to (progress keys: l:선, j:자모, s:/w:낱말, n:숫자)
+  const STAR_CATS = [['lines', '선 긋기'], ['consonants', '자음'], ['vowels', '모음'], ['words', '낱말'], ['numbers', '숫자']];
+  function catOf(key) {
+    const t = key.slice(0, 2), v = key.slice(2);
+    if (t === 'l:') return 'lines';
+    if (t === 'j:') return CONSONANTS.includes(v) ? 'consonants' : 'vowels';
+    if (t === 's:' || t === 'w:') return 'words';
+    if (t === 'n:') return 'numbers';
+    return 'other';
+  }
+  // 'w:' = whole-word bonus marks (not shown as stars)
+  const starsOf = (progress, cat) => Object.keys(progress)
+    .filter((k) => !k.startsWith('w:') && (!cat || catOf(k) === cat))
+    .reduce((a, k) => a + progress[k], 0);
+
+  // Press-and-hold button: fills up over `seconds`, fires only if held the whole time (no accidental taps).
+  function HoldButton({ seconds = 3, onDone, children, className = '', disabled }) {
+    const [p, setP] = useState(0);
+    const raf = useRef(0);
+    const t0 = useRef(0);
+    const cancel = () => { cancelAnimationFrame(raf.current); setP(0); };
+    const begin = (e) => {
+      if (disabled) return;
+      e.preventDefault();
+      t0.current = performance.now();
+      const tick = (t) => {
+        const k = Math.min(1, (t - t0.current) / (seconds * 1000));
+        setP(k);
+        if (k >= 1) { setP(0); onDone(); return; }
+        raf.current = requestAnimationFrame(tick);
+      };
+      raf.current = requestAnimationFrame(tick);
+    };
+    useEffect(() => cancel, []);
+    return html`
+      <button onPointerDown=${begin} onPointerUp=${cancel} onPointerLeave=${cancel} onPointerCancel=${cancel} disabled=${disabled}
+              className=${'relative overflow-hidden rounded-2xl border-4 border-red-100 bg-white text-red-500 disabled:opacity-40 ' + className}>
+        <span className="absolute inset-y-0 left-0 bg-red-100" style=${{ width: p * 100 + '%' }}></span>
+        <span className="relative flex items-center justify-center gap-1">${children}</span>
+      </button>`;
+  }
+
+  // Kid-facing profile picker (big animal buttons)
+  function ProfilePicker({ profiles, activeId, onPick, title }) {
+    return html`
+      <div className="flex flex-col items-center">
+        ${title && html`<p className="text-[30px] text-slate-600 mb-5">${title}</p>`}
+        <div className="flex flex-wrap justify-center gap-5">
+          ${profiles.map((p) => html`<button key=${p.id} onClick=${() => onPick(p.id)}
+              className="btn3d w-[150px] h-[170px] rounded-[32px] bg-white border-4 flex flex-col items-center justify-center gap-2"
+              style=${{ borderColor: p.id === activeId ? '#FB923C' : '#FFE4D0' }}>
+              <span className="text-[76px] leading-none">${p.icon}</span>
+              <span className="text-[24px] leading-none text-slate-600 max-w-[130px] truncate">${p.name}</span>
+            </button>`)}
+        </div>
+      </div>`;
+  }
+
+  function Splash({ onStart, profiles, activeId }) {
+    const many = profiles.length > 1;
     return html`
       <div className="fixed inset-0 z-50 flex flex-col items-center justify-center text-center p-6"
            style=${{ background: 'radial-gradient(circle at 30% 20%, #FFE4E6 0, transparent 40%), radial-gradient(circle at 75% 75%, #E0E7FF 0, transparent 45%), #FFF8EE' }}>
-        <div className="float text-[150px] leading-none mb-2">🐣</div>
+        <div className=${'float leading-none mb-2 ' + (many ? 'text-[110px]' : 'text-[150px]')}>🐣</div>
         <h1 className="title-grad text-[64px] leading-tight">몽글몽글 한글 쓰기</h1>
-        <p className="text-[26px] text-slate-500 mt-3">손가락이나 애플 펜슬로, 같이 따라 써 봐요!</p>
-        <button onClick=${onStart} className="btn3d wiggle mt-10 h-[100px] px-14 rounded-full text-white text-[40px] flex items-center gap-3"
-                style=${{ background: 'linear-gradient(90deg,#FB923C,#F472B6)' }}>
-          <${Icon} name="Play" size=${40} /> 시작하기
-        </button>
+        ${many
+          ? html`<div className="mt-8"><${ProfilePicker} profiles=${profiles} activeId=${activeId} onPick=${onStart} title="누가 쓸까요?" /></div>`
+          : html`<${Frag}>
+              <p className="text-[26px] text-slate-500 mt-3">손가락이나 애플 펜슬로, 같이 따라 써 봐요!</p>
+              <button onClick=${() => onStart(activeId)} className="btn3d wiggle mt-10 h-[100px] px-14 rounded-full text-white text-[40px] flex items-center gap-3"
+                      style=${{ background: 'linear-gradient(90deg,#FB923C,#F472B6)' }}>
+                <${Icon} name="Play" size=${40} /> 시작하기
+              </button>
+            <//>`}
         <p className="text-[18px] text-slate-400 mt-8">🔊 소리를 켜 주세요</p>
       </div>`;
   }
@@ -1493,7 +1588,12 @@
     const [color, setColor] = useState(CRAYONS[0]);
     const [done, setDone] = useState(false);
     const [wordDone, setWordDone] = useState(false);
-    const [progress, setProgress] = useState(() => store.get('monggeul.progress', {}));
+    const boot = useMemo(() => { const list = Profiles.load(); const id = Profiles.activeId(list); return { list, id }; }, []);
+    const [profiles, setProfiles] = useState(boot.list);
+    const [profileId, setProfileId] = useState(boot.id);
+    const [progress, setProgress] = useState(() => Profiles.progress(boot.id));
+    const [pickerOpen, setPickerOpen] = useState(false);
+    const profile = profiles.find((p) => p.id === profileId) || profiles[0];
     const [reps, setReps] = useState(0);
     const [session, setSession] = useState(0);
     const [navId, setNavId] = useState(0);
@@ -1545,9 +1645,55 @@
     };
     const bump = (key) => setProgress((p) => {
       const n = { ...p, [key]: (p[key] || 0) + 1 };
-      store.set('monggeul.progress', n);
+      Profiles.saveProgress(profileId, n);
       return n;
     });
+
+    // ---- profiles (managed in 설정; kids only pick who they are)
+    function switchProfile(id) {
+      if (id === profileId) return;
+      Profiles.setActive(id);
+      setProfileId(id);
+      setProgress(Profiles.progress(id));
+      navigate(() => setReps(0));
+      const p = profiles.find((x) => x.id === id);
+      if (p) setToast(`${p.icon} ${p.name} 차례예요!`);
+    }
+    const saveProfiles = (list) => { setProfiles(list); Profiles.save(list); };
+    const profileOps = {
+      add() {
+        if (profiles.length >= MAX_PROFILES) return;
+        const icon = AVATARS.find((a) => !profiles.some((p) => p.icon === a)) || AVATARS[0];
+        saveProfiles([...profiles, { id: 'p' + Date.now().toString(36), name: `친구 ${profiles.length + 1}`, icon }]);
+      },
+      rename(id, name) { saveProfiles(profiles.map((p) => (p.id === id ? { ...p, name: name.slice(0, 8) } : p))); },
+      nextIcon(id) {
+        saveProfiles(profiles.map((p) => (p.id === id ? { ...p, icon: AVATARS[(AVATARS.indexOf(p.icon) + 1) % AVATARS.length] } : p)));
+      },
+      remove(id) {
+        if (profiles.length <= 1) return;
+        const list = profiles.filter((p) => p.id !== id);
+        saveProfiles(list);
+        Profiles.drop(id);
+        if (id === profileId) {
+          Profiles.setActive(list[0].id);
+          setProfileId(list[0].id);
+          setProgress(Profiles.progress(list[0].id));
+        }
+        setToast('프로필을 지웠어요');
+      },
+      progressOf: (id) => (id === profileId ? progress : Profiles.progress(id)),
+      // cat = null → all stars; otherwise one tab's stars
+      resetStars(id, cat) {
+        const src = id === profileId ? progress : Profiles.progress(id);
+        const kept = cat ? Object.fromEntries(Object.entries(src).filter(([k]) => catOf(k) !== cat)) : {};
+        Profiles.saveProgress(id, kept);
+        if (id === profileId) setProgress(kept);
+        Sfx.clear();
+        const label = cat ? STAR_CATS.find(([c]) => c === cat)[1] + ' ' : '';
+        setToast(`🗑️ ${label}별 기록을 지웠어요`);
+      },
+    };
 
     // Speak the new item's prompt after every navigation
     useEffect(() => {
@@ -1557,13 +1703,18 @@
     }, [navId]);
 
     // ---- actions
-    function start() {
+    function start(id) {
       Sfx.unlock();
       Sfx.pop();
       Speech.unlock();
       Clips.unlock();
       Speech.say(SAY.welcome);
       Clips.preloadAll();
+      if (id && id !== profileId) {
+        Profiles.setActive(id);
+        setProfileId(id);
+        setProgress(Profiles.progress(id));
+      }
       setStarted(true);
     }
     function selectTab(id) {
@@ -1819,9 +1970,11 @@
           <div className="w-[56px] h-[56px] rounded-2xl grid place-items-center text-[34px] soft flex-none" style=${{ background: 'linear-gradient(135deg,#FECDD3,#FED7AA)' }}>🐣</div>
           <h1 className="title-grad text-[28px] leading-none whitespace-nowrap">몽글몽글 한글 쓰기</h1>
           <div className="flex-1"></div>
-          <div className="h-[60px] px-4 rounded-full bg-yellow-100 border-4 border-yellow-300 flex items-center gap-2 text-[24px] text-amber-600 flex-none" aria-label="모은 별">
+          <button onClick=${() => { Sfx.pop(); setPickerOpen(true); }} aria-label=${`${profile.name}, 모은 별 ${total}개. 누르면 다른 친구로 바꿔요`}
+                  className="btn3d h-[60px] pl-2 pr-4 rounded-full bg-yellow-100 border-4 border-yellow-300 flex items-center gap-1.5 text-[24px] text-amber-600 flex-none">
+            <span className="w-[42px] h-[42px] rounded-full bg-white grid place-items-center text-[28px] leading-none">${profile.icon}</span>
             <span>⭐</span><span key=${total} className="pop-in">${total}</span>
-          </div>
+          </button>
           <button onClick=${() => { setMuted((m) => !m); }} aria-label=${muted ? '소리 켜기' : '소리 끄기'}
                   className="btn3d w-[60px] h-[60px] rounded-full bg-white border-4 border-orange-100 grid place-items-center text-slate-500 flex-none">
             <${Icon} name=${muted ? 'VolumeX' : 'Volume2'} size=${28} />
@@ -1854,15 +2007,32 @@
         </div>
 
         ${toast && html`<div key=${toast} className="pop-in fixed left-1/2 top-6 -translate-x-1/2 z-40 px-6 py-3 rounded-full bg-slate-700/90 text-white text-[20px] shadow-lg whitespace-nowrap">${toast}</div>`}
-        ${settingsOpen && html`<${Settings} prefs=${prefs} setPrefs=${setPrefs} penSeen=${penSeen} penOnly=${penOnly} onClose=${() => { Sfx.pop(); setSettingsOpen(false); }} />`}
-        ${!started && html`<${Splash} onStart=${start} />`}
+        ${pickerOpen && html`
+          <div className="fixed inset-0 z-50 bg-slate-900/40 grid place-items-center p-6" onClick=${(e) => { if (e.target === e.currentTarget) setPickerOpen(false); }}>
+            <div className="bg-[#FFF8EE] rounded-[32px] p-8 max-w-[760px] shadow-2xl relative">
+              <button onClick=${() => { Sfx.pop(); setPickerOpen(false); }} aria-label="닫기"
+                      className="btn3d absolute top-4 right-4 w-[60px] h-[60px] rounded-full bg-white border-4 border-orange-100 grid place-items-center text-slate-500">
+                <${Icon} name="X" size=${28} />
+              </button>
+              <${ProfilePicker} profiles=${profiles} activeId=${profileId} title="누가 쓸까요?"
+                                onPick=${(id) => { Sfx.pop(); setPickerOpen(false); switchProfile(id); }} />
+              <p className="text-[17px] text-slate-400 text-center mt-6">친구 추가·이름 바꾸기·별 기록 지우기는 ⚙️ 설정에서 할 수 있어요</p>
+            </div>
+          </div>`}
+        ${settingsOpen && html`<${Settings} prefs=${prefs} setPrefs=${setPrefs} penSeen=${penSeen} penOnly=${penOnly}
+              profiles=${profiles} profileId=${profileId} ops=${profileOps}
+              onClose=${() => { Sfx.pop(); setSettingsOpen(false); }} />`}
+        ${!started && html`<${Splash} onStart=${start} profiles=${profiles} activeId=${profileId} />`}
       </div>`;
   }
 
   // ---------------------------------------------------------------------------
   // 설정 (for parents): voice, speaking speed, Pencil-only mode
   // ---------------------------------------------------------------------------
-  function Settings({ prefs, setPrefs, penSeen, penOnly, onClose }) {
+  function Settings({ prefs, setPrefs, penSeen, penOnly, onClose, profiles, profileId, ops }) {
+    const [resetFor, setResetFor] = useState(profileId); // whose stars the 지우기 buttons act on
+    const resetProfile = profiles.find((p) => p.id === resetFor) || profiles[0];
+    const resetProgress = ops.progressOf(resetProfile.id);
     const [voices, setVoices] = useState(() => Speech.voices());
     const [current, setCurrent] = useState(() => Speech.currentURI());
     useEffect(() => {
@@ -1897,6 +2067,48 @@
           </div>
 
           <div className="scroll-y px-6 pb-6 flex flex-col gap-6">
+            <section>
+              <h3 className="text-[22px] mb-2">👧 아이 프로필 <span className="text-[16px] text-slate-400">(최대 ${MAX_PROFILES}명 · 별 기록은 이 iPad에만 저장돼요)</span></h3>
+              <div className="flex flex-col gap-2">
+                ${profiles.map((p) => html`<div key=${p.id} className="flex items-center gap-2 bg-white rounded-2xl p-2 border-4"
+                      style=${{ borderColor: p.id === profileId ? '#FED7AA' : '#F8FAFC' }}>
+                    <button onClick=${() => { Sfx.pop(); ops.nextIcon(p.id); }} aria-label="아이콘 바꾸기"
+                            className="w-[60px] h-[60px] rounded-2xl bg-orange-50 text-[38px] leading-none grid place-items-center flex-none">${p.icon}</button>
+                    <input type="text" value=${p.name} maxLength=${8} aria-label="이름"
+                           onInput=${(e) => ops.rename(p.id, e.target.value)}
+                           className="flex-1 min-w-0 h-[56px] px-3 rounded-xl bg-slate-50 text-[22px] outline-none focus:ring-4 ring-orange-200" />
+                    <span className="text-[18px] text-amber-600 whitespace-nowrap px-1">⭐ ${starsOf(ops.progressOf(p.id))}</span>
+                    ${profiles.length > 1 && html`<${HoldButton} seconds=${3} onDone=${() => ops.remove(p.id)} className="h-[56px] px-3 text-[16px] flex-none">
+                        <${Icon} name="Trash2" size=${20} /> 꾹 3초<//>`}
+                  </div>`)}
+                ${profiles.length < MAX_PROFILES && html`<button onClick=${() => { Sfx.pop(); ops.add(); }}
+                    className="h-[60px] rounded-2xl border-4 border-dashed border-orange-200 text-orange-500 text-[20px] flex items-center justify-center gap-2">
+                    <${Icon} name="Plus" size=${24} /> 새 친구 추가</button>`}
+              </div>
+              <p className="text-[15px] text-slate-400 mt-2">동물을 누르면 아이콘이 바뀌어요. 프로필 삭제는 휴지통 버튼을 3초 동안 꾹 누르세요.</p>
+            </section>
+
+            <section>
+              <h3 className="text-[22px] mb-2">⭐ 별 기록 지우기</h3>
+              ${profiles.length > 1 && html`<div className="flex gap-2 mb-3 flex-wrap">
+                ${profiles.map((p) => html`<button key=${p.id} onClick=${() => { Sfx.pop(); setResetFor(p.id); }}
+                    className="h-[52px] px-3 rounded-2xl border-4 text-[19px] flex items-center gap-1"
+                    style=${p.id === resetProfile.id ? { background: '#FFF7ED', borderColor: '#FB923C' } : { background: '#fff', borderColor: '#F1F5F9' }}>
+                    <span className="text-[26px]">${p.icon}</span>${p.name}</button>`)}
+              </div>`}
+              <div className="grid grid-cols-3 gap-2">
+                <${HoldButton} onDone=${() => ops.resetStars(resetProfile.id, null)} disabled=${!starsOf(resetProgress)}
+                               className="col-span-3 h-[60px] text-[20px]">
+                  <${Icon} name="Trash2" size=${22} /> ${resetProfile.icon} ${resetProfile.name} 별 모두 지우기 (⭐ ${starsOf(resetProgress)})
+                <//>
+                ${STAR_CATS.map(([cat, label]) => html`<${HoldButton} key=${cat} onDone=${() => ops.resetStars(resetProfile.id, cat)}
+                    disabled=${!starsOf(resetProgress, cat)} className="h-[60px] text-[18px]">
+                    ${label} <span className="text-amber-600">⭐ ${starsOf(resetProgress, cat)}</span>
+                  <//>`)}
+              </div>
+              <p className="text-[15px] text-slate-400 mt-2">아이가 실수로 지우지 않도록, 버튼을 <b>3초 동안 꾹</b> 눌러야 지워져요.</p>
+            </section>
+
             <section>
               <h3 className="text-[22px] mb-2">🎙️ AI 음성 파일</h3>
               ${clipInfo
