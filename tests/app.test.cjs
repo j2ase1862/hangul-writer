@@ -179,6 +179,11 @@ function expect(name, ok, detail = '') { checks++; if (!ok) failures.push(`${nam
   btn('다 했어요', '.controls').click(); await sleep(30);
   expect('다 했어요 → "조금 다른 모양이에요"', said().slice(-1)[0] === '음, 조금 다른 모양이에요. 다시 써 볼까?', said().slice(-1)[0]);
   btn('다시 쓰기').click(); await sleep(500);
+  draw([ring]); // ㅇ in one go: not "획을 하나씩 나눠서…" — it's a different letter
+  await sleep(60);
+  btn('다 했어요', '.controls').click(); await sleep(30);
+  expect('ㅇ in one go for ㅁ: not counted, "조금 다른 모양이에요"', doc.querySelector('.counter').textContent === stars0 && said().slice(-1)[0] === '음, 조금 다른 모양이에요. 다시 써 볼까?', said().slice(-1)[0]);
+  btn('다시 쓰기').click(); await sleep(500);
   draw(box([0.3, 0.3, 0.7, 0.7], [[[0, 0], [0, 1]], [[0, 0], [1, 0], [1, 1]], [[0, 1], [1, 1]]]));
   await sleep(60);
   expect('free writing: a real ㅁ is counted', doc.querySelector('.counter').textContent !== stars0, doc.querySelector('.counter').textContent);

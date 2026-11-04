@@ -140,6 +140,14 @@ for (const it of [...ITEMS.lower, ...ITEMS.ewords].filter((x) => x.strokes.some(
     expect(`혼자 쓰기: ㅇ in 3 pieces for ㅁ fails (${mode})`, !free(m, pieces, lenient).pass, result(free(m, pieces, lenient)));
     const sq = neat(m);
     expect(`혼자 쓰기: ㅁ for ㅇ fails (${mode})`, !free(o, sq, lenient).pass, result(free(o, sq, lenient)));
+    // in one go it would otherwise fail as 'joined' ("획을 하나씩…") — but it's simply a different letter
+    expect(`혼자 쓰기: ㅇ in one go for ㅁ → 'shape', not 'joined' (${mode})`, free(m, circle, lenient).reason === 'shape', result(free(m, circle, lenient)));
+  }
+  // a real ㅁ drawn in one go (strokes joined) is still told to write one stroke at a time
+  {
+    const sqOne = [{ pts: [[0.3, 0.3], [0.3, 0.7], [0.7, 0.7], [0.7, 0.3], [0.3, 0.3]] }];
+    const r = free(m, sqOne);
+    expect(`혼자 쓰기: ㅁ in one go → 'joined'`, r.reason === 'joined', result(r));
   }
   for (const [want, wrote] of [['8', '3'], ['ㅈ', 'ㅅ'], ['ㅅ', 'ㅈ'], ['ㅓ', 'ㅕ'], ['ㅣ', 'ㅏ'], ['d', 'b'], ['o', 'c'], ['C', 'O'], ['ㄹ', 'ㅌ']]) {
     const r = free(find(want), neat(find(wrote)));

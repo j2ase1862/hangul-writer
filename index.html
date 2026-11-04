@@ -1333,7 +1333,17 @@
     const gs = guide.map((s) => resample(s, 0.012));
     const allG = [].concat(...gs);
 
+    // Without a guide the shape fit is loose (ㅁ ≈ ㅇ, 3 ≈ 8): does this drawing pass as another letter of
+    // the group AND clearly look more like it? Then it's that letter, not this one → 'shape' (also when it
+    // would otherwise fail as 'joined'/'missing': an ㅇ drawn in one go for ㅁ is "a different shape", not "joined").
     const drawn = us;
+    const likeRival = () => {
+      if (!free || !rivals || !rivals.length) return false;
+      const shape = inkShape(drawn), mine = shapeScore(guide, shape);
+      return rivals.some((o) => shapeScore(o.strokes, shape) > mine + 0.03
+        && evaluate(o.strokes, user, { free: true, lenient: true, allowJoined: !!o.allowJoined }).pass);
+    };
+    const fail = (reason, idx) => res(false, likeRival() ? 'shape' : reason, idx);
     if (free) {
       // 칸 도우미 OFF: the child may write anywhere/any size → compare shapes after fitting to the guide
       const ub = bbox([].concat(...us)), gb = bbox(allG);
@@ -1401,8 +1411,8 @@
       const allInk = [].concat(...us);
       const joined = gs.every((g) => frac(g, (p) => near(p, allInk, tc)) >= T.own);
       const dotMissing = per.some((v, i) => isDot[i] && v < T.own); // dots always need their own mark
-      if (!joined || dotMissing) return res(false, 'missing', coveredIdx);
-      if (!allowJoined) return res(false, 'joined', coveredIdx); // 한글·숫자: one stroke at a time
+      if (!joined || dotMissing) return fail('missing', coveredIdx);
+      if (!allowJoined) return fail('joined', coveredIdx); // 한글·숫자: one stroke at a time
       // English letters are often written in one go (a, d, n…) — fine, but only if the
       // ink runs right ALONG every stroke, not just past the ends of other strokes (E without its stem)
       const tracedTight = gs.every((g) => frac(g, (p) => near(p, allInk, tc * 0.5)) >= (lenient ? 0.7 : 0.75));
@@ -1420,19 +1430,11 @@
         need[owner[bj]] += pathLen(guide[i]);
       });
       if (!gs.every((_, k) => need[k] === 0 || groupLen[k] >= 0.85 * need[k])) enoughInk = false;
-      if (!tracedTight || !enoughInk) return res(false, 'missing', coveredIdx);
+      if (!tracedTight || !enoughInk) return fail('missing', coveredIdx);
     }
     const allInk = [].concat(...us);
     if (frac(allG, (p) => near(p, allInk, tc)) < T.total) return res(false, 'shape', coveredIdx);
-    // Without a guide the fit above is loose (ㅁ ≈ ㅇ, 3 ≈ 8): if this drawing would also pass as
-    // another letter of the group AND clearly looks more like it, it's that letter, not this one.
-    if (free && rivals && rivals.length) {
-      const shape = inkShape(drawn), mine = shapeScore(guide, shape);
-      for (const o of rivals) {
-        if (shapeScore(o.strokes, shape) > mine + 0.03
-          && evaluate(o.strokes, user, { free: true, lenient: true, allowJoined: !!o.allowJoined }).pass) return res(false, 'shape', coveredIdx);
-      }
-    }
+    if (likeRival()) return res(false, 'shape', coveredIdx);
     return res(true, null, coveredIdx);
   }
 
