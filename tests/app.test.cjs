@@ -169,6 +169,25 @@ function expect(name, ok, detail = '') { checks++; if (!ok) failures.push(`${nam
   expect('free writing: small ㄱ in a corner counts', /⭐ × 1/.test(doc.querySelector('.counter').textContent), doc.querySelector('.counter').textContent);
   await sleep(2000);
   expect('repeat practice clears itself for the next try', !btn('다 했어요', '.controls').disabled);
+  // no guide: ㅇ written for ㅁ (even in three pieces) is not praised — a real ㅁ is
+  $$('.scroll-x button').find((b) => b.getAttribute('aria-label') === '미음').click(); await sleep(80);
+  const ring = Array.from({ length: 25 }, (_, i) => { const a = -Math.PI / 2 - (i / 24) * Math.PI * 2; return [0.5 + 0.2 * Math.cos(a), 0.5 + 0.2 * Math.sin(a)]; });
+  const stars0 = doc.querySelector('.counter').textContent;
+  draw([ring.slice(0, 9), ring.slice(8, 17), ring.slice(16)]);
+  await sleep(60);
+  expect('free writing: ㅇ (3 pieces) for ㅁ is not counted', doc.querySelector('.counter').textContent === stars0 && !btn('다 했어요', '.controls').disabled, doc.querySelector('.counter').textContent);
+  btn('다 했어요', '.controls').click(); await sleep(30);
+  expect('다 했어요 → "조금 다른 모양이에요"', said().slice(-1)[0] === '음, 조금 다른 모양이에요. 다시 써 볼까?', said().slice(-1)[0]);
+  btn('다시 쓰기').click(); await sleep(500);
+  draw(box([0.3, 0.3, 0.7, 0.7], [[[0, 0], [0, 1]], [[0, 0], [1, 0], [1, 1]], [[0, 1], [1, 1]]]));
+  await sleep(60);
+  expect('free writing: a real ㅁ is counted', doc.querySelector('.counter').textContent !== stars0, doc.querySelector('.counter').textContent);
+  await sleep(2000);
+  // 다시 쓰기 says something different each time (never the same line twice in a row)
+  const retries = [];
+  for (let i = 0; i < 6; i++) { btn('다시 쓰기').click(); await sleep(120); retries.push(said().slice(-1)[0]); }
+  expect('다시 쓰기: never the same line twice in a row', retries.every((t, i) => i === 0 || t !== retries[i - 1]), retries.join(' | '));
+  expect('다시 쓰기: several different lines', new Set(retries).size >= 3, retries.join(' | '));
 
   // ---- 설정: profiles, voice, speed, reset
   byLabel('설정').click(); await sleep(120);

@@ -3,9 +3,9 @@
 // Fails (exit 1) if an honest attempt is rejected, or a wrong one (stray line / missing stroke /
 // strokes merged where not allowed / missing i·j dot) is accepted.
 const { loadRecognizer } = require('./lib/app-source.cjs');
-const { rng, trace, child, SHAKINESS, pathLen } = require('./lib/handwriting.cjs');
+const { rng, trace, child, freeHand, SHAKINESS, pathLen } = require('./lib/handwriting.cjs');
 
-const { evaluate, ITEMS, SYLLABLES } = loadRecognizer();
+const { evaluate, ITEMS, SYLLABLES, rivalsOf } = loadRecognizer();
 const opt = (it, extra = {}) => ({ allowJoined: !!it.allowJoined, ...extra });
 
 let checks = 0;
@@ -117,6 +117,62 @@ for (const it of [...ITEMS.lower, ...ITEMS.ewords].filter((x) => x.strokes.some(
   const small = it.strokes.map((s) => ({ pts: trace(s, rand, 0.006).pts.map(([x, y]) => [0.55 + x * 0.4, 0.55 + y * 0.4]) }));
   expect('free mode: small ㅂ in a corner passes', evaluate(it.strokes, small, { free: true }).pass);
   expect('free mode: ㅂ missing a stroke fails', !evaluate(it.strokes, small.slice(1), { free: true, lenient: true }).pass);
+}
+
+// ---------------------------------------------------------------------------------------------
+// 6. 🥇 혼자 쓰기 (no guide): a look-alike letter is not praised (ㅇ written for ㅁ, 3 for 8…),
+//    while honest free writing (any size, a bit squashed/tilted, strokes a little off) still passes
+// ---------------------------------------------------------------------------------------------
+{
+  const r6 = rng(5);
+  const free = (it, user, lenient = true) => evaluate(it.strokes, user, { free: true, lenient, allowJoined: !!it.allowJoined, rivals: rivalsOf(it) });
+  const find = (g) => allItems.find((x) => (x.glyph || x.name) === g);
+  const neat = (it) => freeHand(it.strokes, r6, SHAKINESS[it.kind === 'english' ? 'english' : 'big'].neat, 0.5);
+
+  // the reported case: ㅇ for ㅁ — in one go, or in three pieces
+  const m = find('ㅁ'), o = find('ㅇ');
+  const circle = neat(o);
+  const p = circle[0].pts, t = Math.floor(p.length / 3);
+  const pieces = [{ pts: p.slice(0, t + 1) }, { pts: p.slice(t, 2 * t + 1) }, { pts: p.slice(2 * t) }];
+  for (const lenient of [false, true]) {
+    const mode = lenient ? '다 했어요' : 'auto';
+    expect(`혼자 쓰기: ㅇ for ㅁ fails (${mode})`, !free(m, circle, lenient).pass, result(free(m, circle, lenient)));
+    expect(`혼자 쓰기: ㅇ in 3 pieces for ㅁ fails (${mode})`, !free(m, pieces, lenient).pass, result(free(m, pieces, lenient)));
+    const sq = neat(m);
+    expect(`혼자 쓰기: ㅁ for ㅇ fails (${mode})`, !free(o, sq, lenient).pass, result(free(o, sq, lenient)));
+  }
+  for (const [want, wrote] of [['8', '3'], ['ㅈ', 'ㅅ'], ['ㅅ', 'ㅈ'], ['ㅓ', 'ㅕ'], ['ㅣ', 'ㅏ'], ['d', 'b'], ['o', 'c'], ['C', 'O'], ['ㄹ', 'ㅌ']]) {
+    const r = free(find(want), neat(find(wrote)));
+    expect(`혼자 쓰기: ${wrote} for ${want} fails`, !r.pass, result(r));
+  }
+
+  // every letter written for every other letter of its group (낱말 글자: every 4th, for time)
+  const groups = [
+    ['자모', [...ITEMS.consonants, ...ITEMS.vowels], 0],
+    ['숫자', ITEMS.numbers.filter((x) => x.glyph.length === 1), 0],
+    ['대문자', ITEMS.upper, 0],
+    ['소문자', ITEMS.lower, 5],     // a few rare ones remain (l ← i: a dot is tiny; o ← a)
+    ['낱말 글자', SYLLABLES.filter((_, i) => i % 4 === 0), 2],
+  ];
+  for (const [name, items, allowed] of groups) {
+    const wrong = [];
+    for (const target of items) for (const drawn of items) {
+      if (drawn !== target && free(target, neat(drawn)).pass) wrong.push(`${target.glyph}←${drawn.glyph}`);
+    }
+    expect(`혼자 쓰기 [${name}]: other letters accepted ≤ ${allowed}`, wrong.length <= allowed, `${wrong.length}: ${wrong.slice(0, 12).join(' ')}`);
+    // honest writing (neat / shaky, normal misplacement) that the shape check accepts must not be
+    // turned down by the look-alike comparison
+    const scale = name.endsWith('문자') ? 'english' : 'big';
+    const lost = [];
+    let n = 0;
+    for (const level of ['neat', 'shaky']) for (const it of items) for (let rep = 0; rep < 2; rep++) {
+      const user = freeHand(it.strokes, r6, SHAKINESS[scale][level], 1);
+      if (!evaluate(it.strokes, user, { free: true, lenient: true, allowJoined: !!it.allowJoined }).pass) continue;
+      n++;
+      if (!free(it, user).pass) lost.push(`${it.glyph}(${level})`);
+    }
+    expect(`혼자 쓰기 [${name}]: honest writing still passes (≥ 97%)`, lost.length <= n * 0.03, `${lost.length}/${n}: ${lost.slice(0, 12).join(' ')}`);
+  }
 }
 
 // ---------------------------------------------------------------------------------------------

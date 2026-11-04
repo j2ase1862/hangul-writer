@@ -346,6 +346,14 @@
     set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* private mode */ } },
   };
   const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
+  // like pick, but never the same one twice in a row (so 다시 쓰기 / praise don't sound stuck)
+  const lastPicked = new Map();
+  function pickFresh(arr) {
+    let i = Math.floor(Math.random() * arr.length);
+    if (arr.length > 1 && i === lastPicked.get(arr)) i = (i + 1 + Math.floor(Math.random() * (arr.length - 1))) % arr.length;
+    lastPicked.set(arr, i);
+    return arr[i];
+  }
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const easeInOut = (t) => (t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2);
@@ -797,6 +805,68 @@
     return { w: x1 - x0, h: y1 - y0, cx: (x0 + x1) / 2, cy: (y0 + y1) / 2 };
   }
 
+  // How much a free drawing (no guide shown) LOOKS LIKE a letter: 0..1.
+  // The drawing is fitted to the letter's box (a little stretch allowed), then both are compared
+  // point by point — a point matches only if the other one is close AND runs the same way
+  // (so a round ㅇ doesn't match the straight sides and corners of ㅁ). Used to tell look-alikes apart.
+  //   inkShape(drawn) once per drawing → shapeScore(letterStrokes, shape) per letter compared
+  const dirPoints = (strokes, step, map = (p) => p) => {
+    const out = [];
+    strokes.forEach((s0) => {
+      const s = resample(s0, step);
+      s.forEach((p, i) => {
+        const a = s[Math.max(0, i - 2)], b = s[Math.min(s.length - 1, i + 2)], l = dist(a, b);
+        const q = map(p);
+        out.push(l > 1e-6 ? [q[0], q[1], (b[0] - a[0]) / l, (b[1] - a[1]) / l] : [q[0], q[1], 0, 0, true]);
+      });
+    });
+    return out;
+  };
+  // the drawing, centred and scaled so its longer side is 1
+  function inkShape(drawn) {
+    const ink = drawn.filter((p) => p.length > 2 && pathLen(p) >= 0.02);
+    if (!ink.length) return null;
+    const ub = bbox([].concat(...ink)), m = Math.max(ub.w, ub.h) || 1;
+    return { pts: dirPoints(ink, m / 45, ([x, y]) => [(x - ub.cx) / m, (y - ub.cy) / m]), w: ub.w / m, h: ub.h / m };
+  }
+  const shapeCache = new WeakMap(); // letter strokes → its points (letters never change)
+  function shapeScore(guide, shape) {
+    if (!shape) return 0;
+    const gb = bbox([].concat(...guide)), gMax = Math.max(gb.w, gb.h), k = gMax;
+    const STRETCH = 1.15;
+    const cl = (v) => Math.min(k * STRETCH, Math.max(k / STRETCH, v));
+    const kx = shape.w > 0.02 && gb.w > 0.02 * gMax ? cl(gb.w / shape.w) : k;
+    const ky = shape.h > 0.02 && gb.h > 0.02 * gMax ? cl(gb.h / shape.h) : k;
+    const r = 0.13 * gMax, r2 = r * r;
+    const grid = (Q) => {
+      const m = new Map();
+      Q.forEach((q) => { const c = Math.floor(q[0] / r) * 4096 + Math.floor(q[1] / r); if (!m.has(c)) m.set(c, []); m.get(c).push(q); });
+      return m;
+    };
+    const hit = (p, M) => {
+      const cx = Math.floor(p[0] / r), cy = Math.floor(p[1] / r);
+      for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) {
+        const L = M.get((cx + a) * 4096 + cy + b);
+        if (L) for (const q of L) {
+          const dx = p[0] - q[0], dy = p[1] - q[1];
+          if (dx * dx + dy * dy <= r2 && (p[4] || q[4] || Math.abs(p[2] * q[3] - p[3] * q[2]) < 0.6)) return true;
+        }
+      }
+      return false;
+    };
+    if (!shapeCache.has(guide)) { const G0 = dirPoints(guide, gMax / 45); shapeCache.set(guide, { G: G0, GM: grid(G0) }); }
+    const { G, GM } = shapeCache.get(guide);
+    // the drawing fitted onto this letter's box (directions follow the stretch)
+    const U = shape.pts.map(([x, y, dx, dy, still]) => {
+      if (still) return [gb.cx + x * kx, gb.cy + y * ky, 0, 0, true];
+      const ex = dx * kx, ey = dy * ky, l = Math.hypot(ex, ey) || 1;
+      return [gb.cx + x * kx, gb.cy + y * ky, ex / l, ey / l];
+    });
+    const UM = grid(U);
+    const gf = G.filter((p) => hit(p, UM)).length / G.length, uf = U.filter((p) => hit(p, GM)).length / U.length;
+    return gf + uf ? (2 * gf * uf) / (gf + uf) : 0;
+  }
+
   // ---------------------------------------------------------------------------
   // Hangul stroke data (tight 0..1 boxes, in correct stroke order & direction)
   // ---------------------------------------------------------------------------
@@ -1136,6 +1206,18 @@
     }));
     return out;
   })();
+  // 혼자 쓰기 (no guide): the drawing is also compared with the other letters of its group,
+  // so writing ㅇ for ㅁ (or 3 for 8) is not praised. Same length only (낱말·숫자 10~).
+  const RIVAL_GROUPS = [ITEMS.lines, [...ITEMS.consonants, ...ITEMS.vowels], SYLLABLES, ITEMS.numbers, ITEMS.upper, ITEMS.lower, ITEMS.ewords];
+  const rivalCache = new Map();
+  function rivalsOf(item) {
+    if (!rivalCache.has(item.key)) {
+      const len = (x) => (x.glyph || x.name || '').length;
+      const g = RIVAL_GROUPS.find((list) => list.some((x) => x.key === item.key)) || [];
+      rivalCache.set(item.key, g.filter((x) => x.key !== item.key && len(x) === len(item)));
+    }
+    return rivalCache.get(item.key);
+  }
   const PCATS = [
     { id: 'lines', label: '선', items: ITEMS.lines },
     { id: 'consonants', label: '자음', items: ITEMS.consonants },
@@ -1180,9 +1262,12 @@
   ];
 
   const SAY = {
-    retry: '다시 써볼까?',
+    // 🔄 다시 쓰기: a different one each time
+    retry: ['다시 써볼까?', '한 번 더 써 볼까?', '좋아, 다시 해 보자!', '천천히 다시 써 볼까?', '이번엔 더 멋지게 써 볼까?'],
     inkFirst: '먼저 따라서 써 볼까?',
     almost: '조금만 더! 선을 따라서 써 볼까?',
+    // no guide (🥇 혼자 쓰기, 칸 도우미 OFF): the shape doesn't match — e.g. ㅇ written for ㅁ
+    almostFree: '음, 조금 다른 모양이에요. 다시 써 볼까?',
     // why 다 했어요 didn't pass (see evaluate → reason)
     stray: '선 밖에 그은 곳이 있어요. 다시 써 볼까?',
     missing: '아직 안 쓴 획이 있어요. 마저 써 볼까?',
@@ -1200,7 +1285,7 @@
   };
   const MILESTONE_MAX = 100; // voice files exist for 5, 10, … 100 repetitions
   function buildPhrases() {
-    const out = new Set([SAY.retry, SAY.inkFirst, SAY.almost, SAY.stray, SAY.missing, SAY.joined,
+    const out = new Set([...SAY.retry, SAY.inkFirst, SAY.almost, SAY.almostFree, SAY.stray, SAY.missing, SAY.joined,
       ...SAY.stageIntro, ...SAY.medal, SAY.nextLetter, ...Object.values(SAY.pick), ...PRAISE, ...NUM_KO, ...SUBJECTS.map((x) => x.intro)]);
     [...ITEMS.lines, ...ITEMS.consonants, ...ITEMS.vowels, ...ITEMS.numbers, ...ITEMS.upper, ...ITEMS.lower, ...ITEMS.ewords]
       .forEach((it) => out.add(it.speak));
@@ -1232,9 +1317,10 @@
   //                                                                        child drew several in one line)
   //   • a guide stroke drawn in several pieces (pen lifted) still counts; tiny taps are ignored
   //   • the whole letter must be covered well enough                    → otherwise 'shape'
+  //   • free (no guide): a look-alike letter from `rivals` must not fit clearly better → 'shape'
   // Returns { pass, reason, coveredIdx } — coveredIdx = guide strokes already done (badges turn ✓).
   // ---------------------------------------------------------------------------
-  function evaluate(guide, user, { free = false, lenient = false, allowJoined = false } = {}) {
+  function evaluate(guide, user, { free = false, lenient = false, allowJoined = false, rivals = null } = {}) {
     const T = lenient ? { prec: 0.55, own: 0.6, total: 0.65 } : { prec: 0.7, own: 0.75, total: 0.8 };
     const res = (pass, reason, coveredIdx = []) => ({ pass, reason, coveredIdx });
     if (!guide.length) return res(false, 'missing');
@@ -1247,6 +1333,7 @@
     const gs = guide.map((s) => resample(s, 0.012));
     const allG = [].concat(...gs);
 
+    const drawn = us;
     if (free) {
       // 칸 도우미 OFF: the child may write anywhere/any size → compare shapes after fitting to the guide
       const ub = bbox([].concat(...us)), gb = bbox(allG);
@@ -1337,6 +1424,15 @@
     }
     const allInk = [].concat(...us);
     if (frac(allG, (p) => near(p, allInk, tc)) < T.total) return res(false, 'shape', coveredIdx);
+    // Without a guide the fit above is loose (ㅁ ≈ ㅇ, 3 ≈ 8): if this drawing would also pass as
+    // another letter of the group AND clearly looks more like it, it's that letter, not this one.
+    if (free && rivals && rivals.length) {
+      const shape = inkShape(drawn), mine = shapeScore(guide, shape);
+      for (const o of rivals) {
+        if (shapeScore(o.strokes, shape) > mine + 0.03
+          && evaluate(o.strokes, user, { free: true, lenient: true, allowJoined: !!o.allowJoined }).pass) return res(false, 'shape', coveredIdx);
+      }
+    }
     return res(true, null, coveredIdx);
   }
 
@@ -1559,7 +1655,7 @@
       const p = P.current;
       const free = !p.showGuide;
       if (!p.item) return;
-      const res = evaluate(p.item.strokes, strokes.current, { free, allowJoined: !!p.item.allowJoined });
+      const res = evaluate(p.item.strokes, strokes.current, { free, allowJoined: !!p.item.allowJoined, rivals: free ? rivalsOf(p.item) : null });
       if (!free) {
         const fresh = res.coveredIdx.filter((i) => !covered.current.has(i));
         if (fresh.length) {
@@ -1704,7 +1800,11 @@
 
     useImperativeHandle(ref, () => ({
       hasInk: () => strokes.current.length > 0,
-      check: () => (P.current.item ? evaluate(P.current.item.strokes, strokes.current, { free: !P.current.showGuide, lenient: true, allowJoined: !!P.current.item.allowJoined }) : { pass: false, reason: 'missing' }),
+      check: () => {
+        const p = P.current, free = !p.showGuide;
+        if (!p.item) return { pass: false, reason: 'missing' };
+        return evaluate(p.item.strokes, strokes.current, { free, lenient: true, allowJoined: !!p.item.allowJoined, rivals: free ? rivalsOf(p.item) : null });
+      },
       clear(animated) {
         stopDemo();
         const s = SR.current;
@@ -2244,7 +2344,7 @@
       if (moved) { Sfx.clear(); Speech.say(SAY.stageIntro[moved - 1]); return; }
       if (board.current) board.current.clear(true);
       Sfx.clear();
-      Speech.say(SAY.retry);
+      Speech.say(pickFresh(SAY.retry));
       doneRef.current = false;
       setDone(false);
       setWordDone(false);
@@ -2266,6 +2366,8 @@
       if (!board.current.hasInk()) { Speech.say(SAY.inkFirst); return; }
       const r = board.current.check();
       if (r.pass) onSuccess();
+      // no guide on screen: "선 밖에… / 선을 따라서…" make no sense → "조금 다른 모양이에요"
+      else if (!showGuide && (r.reason === 'shape' || r.reason === 'stray')) Speech.say(SAY.almostFree);
       else Speech.say(SAY[r.reason] || SAY.almost); // stray / missing / joined / (shape → almost)
     }
     function toggleGrid() {
@@ -2318,7 +2420,7 @@
       } else {
         burst(false);
         Sfx.clap();
-        later(700, () => Speech.say(pick(PRAISE)));
+        later(700, () => Speech.say(pickFresh(PRAISE)));
       }
     }
     // one more success at the current stage → returns that stage's new count

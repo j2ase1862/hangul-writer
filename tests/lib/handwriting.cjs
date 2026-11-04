@@ -61,7 +61,20 @@ const SHAKINESS = {
   },
 };
 
+// 🥇 혼자 쓰기 (no guide): the child writes the letter from memory — any size, a bit squashed or
+// tilted, and each stroke placed a little off. sev = how much (0 = only size, 1 = normal, 1.5 = sloppy).
+function freeHand(strokes, rand, prm, sev = 1) {
+  const sc = 0.6 + rand() * 0.5, asp = 1 + (rand() - 0.5) * 0.3 * sev, rot = (rand() - 0.5) * 0.2 * sev;
+  return strokes.map((s) => {
+    const off = [(rand() - 0.5) * 0.05 * sev, (rand() - 0.5) * 0.05 * sev];
+    return { pts: child(s, rand, prm).pts.map(([x, y]) => {
+      x = (x - 0.5) * asp + off[0]; y = (y - 0.5) / asp + off[1];
+      return [0.5 + (x * Math.cos(rot) - y * Math.sin(rot)) * sc, 0.5 + (x * Math.sin(rot) + y * Math.cos(rot)) * sc];
+    }) };
+  });
+}
+
 const pathLen = (s) => s.slice(1).reduce((a, p, k) => a + Math.hypot(p[0] - s[k][0], p[1] - s[k][1]), 0);
 const STRAY = (rand) => trace([[0.04, 0.92], [0.3, 0.97]], rand, 0.004); // a line in an empty corner
 
-module.exports = { rng, trace, child, SHAKINESS, pathLen, STRAY };
+module.exports = { rng, trace, child, freeHand, SHAKINESS, pathLen, STRAY };

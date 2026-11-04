@@ -19,11 +19,11 @@ function evaluateSource(html = readHtml()) {
   return html.slice(start, html.indexOf('\n  }\n', start) + 4);
 }
 
-// { evaluate, ITEMS, SYLLABLES, buildPhrases, phraseId } evaluated together, like in the app
+// { evaluate, ITEMS, SYLLABLES, buildPhrases, phraseId, rivalsOf, shapeScore, inkShape } evaluated together, like in the app
 function loadRecognizer() {
   const html = readHtml();
   // eslint-disable-next-line no-new-func
-  return new Function(`${dataBlock(html)}\n${evaluateSource(html)}\nreturn { evaluate, ITEMS, SYLLABLES, buildPhrases, phraseId };`)();
+  return new Function(`${dataBlock(html)}\n${evaluateSource(html)}\nreturn { evaluate, ITEMS, SYLLABLES, buildPhrases, phraseId, rivalsOf, shapeScore, inkShape };`)();
 }
 
 // The whole app script (the inline <script> that defines App)
